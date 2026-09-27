@@ -1,7 +1,7 @@
 "use client";
 import { useState, useMemo } from "react";
 import { Avatar } from "@/components/ui/avatar";
-import { CheckCircle, XCircle, Users, ChevronRight, Clock } from "lucide-react";
+import { CheckCircle, XCircle, Users, ChevronRight, Search } from "lucide-react";
 import Link from "next/link";
 
 const DAY_OPTIONS = [
@@ -14,11 +14,11 @@ const DAY_OPTIONS = [
   { value: 0, label: "Sunday" },
 ];
 
-// 5 AM – 10 PM hourly
-const HOUR_OPTIONS = Array.from({ length: 18 }, (_, i) => {
-  const h = i + 5;
-  const label = h === 0 ? "12 AM" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`;
-  return { value: h, label };
+const TIME_OPTIONS = Array.from({ length: 18 }, (_, i) => {
+  const h = i + 5; // 5 AM to 10 PM
+  const next = h + 1;
+  const fmt = (n: number) => n === 0 ? "12 AM" : n < 12 ? `${n} AM` : n === 12 ? "12 PM" : `${n - 12} PM`;
+  return { value: h, label: `${fmt(h)} – ${fmt(next)}` };
 });
 
 function fmtHour(h: number): string {
@@ -60,291 +60,225 @@ interface Props {
   assignments: Assignment[];
 }
 
-interface SlotInfo {
-  hour: number;
-  used: number;
-  free: number;
-  max: number;
-}
-
-interface TrainerResult {
-  trainer: Trainer;
-  status: "available" | "full" | "off";
-  freeSlots: SlotInfo[];
-  usedSlots: SlotInfo[];
-}
-
 export function AvailabilityFinder({ trainers, workingHours, assignments }: Props) {
   const todayDow = new Date().getDay();
-  const [selectedDay, setSelectedDay] = useState(todayDow);
-  const [filterHour, setFilterHour] = useState<number | null>(null); // null = any time
+  const nowH = new Date().getHours();
+  const defaultHour = Math.min(Math.max(nowH, 5), 22);
 
-  const results: TrainerResult[] = useMemo(() => {
+  const [selectedDay, setSelectedDay] = useState(todayDow);
+  const [selectedHour, setSelectedHour] = useState(defaultHour);
+  const [searched, setSearched] = useState(false);
+
+  const results = useMemo(() => {
+    if (!searched) return null;
+
     return trainers.map(trainer => {
       const wh = workingHours.find(
         w => w.trainer_id === trainer.id && w.day_of_week === selectedDay
       );
 
-      if (!wh || !wh.is_working_day) {
-        return { trainer, status: "off" as const, freeSlots: [], usedSlots: [] };
-      }
+      if (!wh || !wh.is_working_day) return { trainer, status: "off" as const, freeSlots: [], used: 0, max: 0 };
 
       const [sh] = wh.start_time.split(":").map(Number);
       const [eh] = wh.end_time.split(":").map(Number);
+
+      if (selectedHour < sh || selectedHour >= eh) return { trainer, status: "off" as const, freeSlots: [], used: 0, max: 0 };
+
       const max = trainer.max_clients_per_slot ?? 1;
 
-      const freeSlots: SlotInfo[] = [];
-      const usedSlots: SlotInfo[] = [];
+      // how many assignments at the selected hour
+      const used = assignments.filter(a => {
+        if (a.trainer_id !== trainer.id) return false;
+        if (!a.days_of_week?.includes(selectedDay)) return false;
+        const [ah] = (a.preferred_time ?? "").split(":").map(Number);
+        return ah === selectedHour;
+      }).length;
 
+      const free = Math.max(0, max - used);
+      if (free === 0) return { trainer, status: "full" as const, freeSlots: [], used, max };
+
+      // collect all free slots for the day (to show context)
+      const freeSlots: number[] = [];
       for (let h = sh; h < eh; h++) {
-        const used = assignments.filter(a => {
+        const u = assignments.filter(a => {
           if (a.trainer_id !== trainer.id) return false;
           if (!a.days_of_week?.includes(selectedDay)) return false;
           const [ah] = (a.preferred_time ?? "").split(":").map(Number);
           return ah === h;
         }).length;
-
-        const free = Math.max(0, max - used);
-        const slot: SlotInfo = { hour: h, used, free, max };
-        if (free > 0) freeSlots.push(slot);
-        else usedSlots.push(slot);
+        if (max - u > 0) freeSlots.push(h);
       }
 
-      const status = freeSlots.length > 0 ? ("available" as const) : ("full" as const);
-      return { trainer, status, freeSlots, usedSlots };
+      return { trainer, status: "available" as const, freeSlots, used, max, free };
     });
-  }, [selectedDay, trainers, workingHours, assignments]);
+  }, [searched, selectedDay, selectedHour, trainers, workingHours, assignments]);
 
-  // When a time filter is active, narrow to trainers free at that hour
-  const filtered = useMemo(() => {
-    if (filterHour === null) return results;
-    return results.map(r => {
-      if (r.status === "off") return r;
-      const freeAtTime = r.freeSlots.filter(s => s.hour === filterHour);
-      if (freeAtTime.length === 0) {
-        // check if they're working at that hour but full
-        const allSlots = [...r.freeSlots, ...r.usedSlots];
-        const worksAtTime = allSlots.some(s => s.hour === filterHour);
-        return { ...r, status: worksAtTime ? ("full" as const) : ("off" as const) };
-      }
-      return r;
-    });
-  }, [results, filterHour]);
+  const available = results?.filter(r => r.status === "available") ?? [];
+  const full      = results?.filter(r => r.status === "full")      ?? [];
+  const off       = results?.filter(r => r.status === "off")       ?? [];
 
-  const available = filtered.filter(r => r.status === "available").sort((a, b) => b.freeSlots.length - a.freeSlots.length);
-  const full      = filtered.filter(r => r.status === "full");
-  const off       = filtered.filter(r => r.status === "off");
-
-  const selectedDayLabel = DAY_OPTIONS.find(d => d.value === selectedDay)?.label ?? "";
-  const filterLabel = filterHour !== null ? HOUR_OPTIONS.find(o => o.value === filterHour)?.label : null;
+  const dayLabel  = DAY_OPTIONS.find(d => d.value === selectedDay)?.label ?? "";
+  const timeLabel = TIME_OPTIONS.find(t => t.value === selectedHour)?.label ?? "";
 
   return (
     <div className="space-y-4">
-      {/* Header + filters */}
+      {/* Selectors */}
       <div className="bg-[#222520] border border-[#2E3129] rounded-2xl p-5 space-y-4">
         <div>
-          <h2 className="text-sm font-semibold text-[#E8EBE4]">Check Trainer Availability</h2>
-          <p className="text-[11px] text-[#6B6E67] mt-0.5">Pick a day, optionally narrow by time slot</p>
+          <h2 className="text-sm font-semibold text-[#E8EBE4]">Find Available Trainer</h2>
+          <p className="text-[11px] text-[#6B6E67] mt-0.5">Select a day and time to see who is free</p>
         </div>
 
-        {/* Day buttons */}
-        <div className="flex flex-wrap gap-2">
-          {DAY_OPTIONS.map(d => (
-            <button
-              key={d.value}
-              onClick={() => setSelectedDay(d.value)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                selectedDay === d.value
-                  ? "bg-[#B9E84A] text-[#171917]"
-                  : "bg-[#1A1C18] border border-[#2E3129] text-[#9B9E96] hover:text-[#E8EBE4] hover:border-[#B9E84A]/40"
-              }`}
-            >
-              {d.label.slice(0, 3)}
-            </button>
-          ))}
-        </div>
-
-        {/* Time filter */}
-        <div className="flex items-center gap-3">
-          <div className="relative flex-1 max-w-[220px]">
-            <Clock size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B6E67] pointer-events-none" />
+        <div className="flex flex-wrap gap-3 items-end">
+          {/* Day */}
+          <div className="flex-1 min-w-[140px]">
+            <label className="block text-[10px] font-semibold text-[#6B6E67] uppercase tracking-wide mb-1.5">Day</label>
             <select
-              value={filterHour ?? ""}
-              onChange={e => setFilterHour(e.target.value === "" ? null : Number(e.target.value))}
-              className="w-full pl-8 pr-3 py-2 text-xs border border-[#2E3129] rounded-xl bg-[#1A1C18] text-[#E8EBE4] focus:outline-none focus:border-[#B9E84A] appearance-none cursor-pointer"
+              value={selectedDay}
+              onChange={e => { setSelectedDay(Number(e.target.value)); setSearched(false); }}
+              className="w-full px-3 py-2.5 text-sm border border-[#2E3129] rounded-xl bg-[#1A1C18] text-[#E8EBE4] focus:outline-none focus:border-[#B9E84A] appearance-none cursor-pointer"
             >
-              <option value="">Any time — show all slots</option>
-              {HOUR_OPTIONS.map(o => (
-                <option key={o.value} value={o.value}>{o.label} – {HOUR_OPTIONS[HOUR_OPTIONS.indexOf(o) + 1]?.label ?? "11 PM"}</option>
+              {DAY_OPTIONS.map(d => (
+                <option key={d.value} value={d.value}>{d.label}</option>
               ))}
             </select>
           </div>
-          {filterHour !== null && (
-            <button
-              onClick={() => setFilterHour(null)}
-              className="text-[11px] text-[#9B9E96] hover:text-[#E8EBE4] border border-[#2E3129] px-2.5 py-1.5 rounded-lg hover:border-[#B9E84A]/40 transition-colors"
+
+          {/* Time */}
+          <div className="flex-1 min-w-[160px]">
+            <label className="block text-[10px] font-semibold text-[#6B6E67] uppercase tracking-wide mb-1.5">Time Slot</label>
+            <select
+              value={selectedHour}
+              onChange={e => { setSelectedHour(Number(e.target.value)); setSearched(false); }}
+              className="w-full px-3 py-2.5 text-sm border border-[#2E3129] rounded-xl bg-[#1A1C18] text-[#E8EBE4] focus:outline-none focus:border-[#B9E84A] appearance-none cursor-pointer"
             >
-              Clear
-            </button>
-          )}
+              {TIME_OPTIONS.map(t => (
+                <option key={t.value} value={t.value}>{t.label}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Search */}
+          <button
+            onClick={() => setSearched(true)}
+            className="h-10 px-5 bg-[#B9E84A] text-[#171917] font-semibold text-sm rounded-xl hover:bg-[#A8D63A] transition-colors flex items-center gap-2 whitespace-nowrap"
+          >
+            <Search size={14} /> Search
+          </button>
         </div>
       </div>
 
-      {/* Summary */}
-      <div className="flex flex-wrap items-center gap-2 text-xs">
-        <span className="font-medium text-[#9B9E96]">
-          {selectedDayLabel}{filterLabel ? ` · ${filterLabel}` : ""}
-        </span>
-        <span className="text-[#3A3D35]">·</span>
-        <span className="flex items-center gap-1.5 bg-[#B9E84A]/10 border border-[#B9E84A]/30 px-2.5 py-1 rounded-full">
-          <CheckCircle size={10} className="text-[#B9E84A]" />
-          <span className="text-[#B9E84A] font-semibold">{available.length}</span>
-          <span className="text-[#B9E84A]/70">available</span>
-        </span>
-        <span className="flex items-center gap-1.5 bg-red-500/10 border border-red-500/25 px-2.5 py-1 rounded-full">
-          <XCircle size={10} className="text-red-400" />
-          <span className="text-red-400 font-semibold">{full.length}</span>
-          <span className="text-red-400/70">full</span>
-        </span>
-        <span className="flex items-center gap-1.5 bg-[#1A1C18] border border-[#2E3129] px-2.5 py-1 rounded-full">
-          <span className="text-[#6B6E67] font-semibold">{off.length}</span>
-          <span className="text-[#6B6E67]">not working</span>
-        </span>
-      </div>
-
-      {/* Available trainers */}
-      {available.length > 0 && (
-        <div className="bg-[#222520] border border-[#B9E84A]/25 rounded-2xl overflow-hidden">
-          <div className="px-5 py-3 border-b border-[#B9E84A]/15 flex items-center gap-2">
-            <CheckCircle size={13} className="text-[#B9E84A]" />
-            <span className="text-sm font-semibold text-[#E8EBE4]">Available Trainers</span>
-            <span className="text-xs text-[#9B9E96]">
-              — {filterLabel ? `free at ${filterLabel} on ${selectedDayLabel}` : `free slots on ${selectedDayLabel}`}
+      {/* Results */}
+      {results && (
+        <div className="space-y-3">
+          {/* Summary */}
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="font-medium text-[#9B9E96]">{dayLabel} · {timeLabel}</span>
+            <span className="text-[#3A3D35]">·</span>
+            <span className="flex items-center gap-1.5 bg-[#B9E84A]/10 border border-[#B9E84A]/30 px-2.5 py-1 rounded-full">
+              <CheckCircle size={10} className="text-[#B9E84A]" />
+              <span className="text-[#B9E84A] font-semibold">{available.length}</span>
+              <span className="text-[#B9E84A]/70">free</span>
+            </span>
+            <span className="flex items-center gap-1.5 bg-red-500/10 border border-red-500/25 px-2.5 py-1 rounded-full">
+              <XCircle size={10} className="text-red-400" />
+              <span className="text-red-400 font-semibold">{full.length}</span>
+              <span className="text-red-400/70">full</span>
+            </span>
+            <span className="flex items-center gap-1.5 bg-[#1A1C18] border border-[#2E3129] px-2.5 py-1 rounded-full">
+              <span className="text-[#6B6E67] font-semibold">{off.length}</span>
+              <span className="text-[#6B6E67]">not working</span>
             </span>
           </div>
-          <div className="divide-y divide-[#1A1C18]">
-            {available.map(({ trainer, freeSlots, usedSlots }) => (
-              <div key={trainer.id} className="px-5 py-4 hover:bg-[#1E2020]/50 transition-colors">
-                <div className="flex items-center gap-3 mb-3">
-                  <Avatar firstName={trainer.first_name} lastName={trainer.last_name} src={trainer.profile_picture_url} size="sm" />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-semibold text-[#E8EBE4]">
-                      {trainer.first_name} {trainer.last_name}
-                    </div>
-                    <div className="text-[11px] text-[#9B9E96] mt-0.5">
-                      {freeSlots.length} free · {usedSlots.length} booked
-                    </div>
-                  </div>
-                  <Link
-                    href={`/manager/trainers/${trainer.id}`}
-                    className="flex items-center gap-1 text-xs text-[#9B9E96] hover:text-[#E8EBE4] border border-[#2E3129] px-2.5 py-1.5 rounded-lg hover:border-[#B9E84A]/40 transition-colors flex-shrink-0"
-                  >
-                    View <ChevronRight size={11} />
-                  </Link>
-                </div>
 
-                <div className="flex flex-wrap gap-1.5">
-                  {freeSlots.map(s => (
-                    <span
-                      key={s.hour}
-                      className={`inline-flex items-center gap-1 text-[11px] font-medium px-2.5 py-1 rounded-lg transition-all ${
-                        filterHour === s.hour
-                          ? "bg-[#B9E84A] text-[#171917] border border-[#B9E84A]"
-                          : "bg-[#B9E84A]/12 border border-[#B9E84A]/35 text-[#B9E84A]"
-                      }`}
-                    >
-                      {slotLabel(s.hour)}
-                      {s.max > 1 && (
-                        <span className={`text-[9px] ${filterHour === s.hour ? "text-[#171917]/60" : "text-[#B9E84A]/60"}`}>
-                          {s.free}/{s.max}
+          {/* Available */}
+          {available.length > 0 ? (
+            <div className="bg-[#222520] border border-[#B9E84A]/25 rounded-2xl overflow-hidden">
+              <div className="px-5 py-3 border-b border-[#B9E84A]/15 flex items-center gap-2">
+                <CheckCircle size={13} className="text-[#B9E84A]" />
+                <span className="text-sm font-semibold text-[#E8EBE4]">Available</span>
+              </div>
+              <div className="divide-y divide-[#1A1C18]">
+                {available.map((r: any) => (
+                  <div key={r.trainer.id} className="px-5 py-4 hover:bg-[#1E2020]/50 transition-colors">
+                    <div className="flex items-center gap-3 mb-3">
+                      <Avatar firstName={r.trainer.first_name} lastName={r.trainer.last_name} src={r.trainer.profile_picture_url} size="sm" />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-semibold text-[#E8EBE4]">{r.trainer.first_name} {r.trainer.last_name}</div>
+                        <div className="text-[11px] text-[#9B9E96] mt-0.5">
+                          {r.used}/{r.max} booked · <span className="text-[#B9E84A]">{r.free} slot{r.free !== 1 ? "s" : ""} free</span>
+                        </div>
+                      </div>
+                      <Link
+                        href={`/manager/trainers/${r.trainer.id}`}
+                        className="flex items-center gap-1 text-xs text-[#9B9E96] hover:text-[#E8EBE4] border border-[#2E3129] px-2.5 py-1.5 rounded-lg hover:border-[#B9E84A]/40 transition-colors flex-shrink-0"
+                      >
+                        View <ChevronRight size={11} />
+                      </Link>
+                    </div>
+                    {/* All free slots for the day */}
+                    <div className="flex flex-wrap gap-1.5">
+                      {r.freeSlots.map((h: number) => (
+                        <span
+                          key={h}
+                          className={`inline-flex items-center text-[11px] font-medium px-2.5 py-1 rounded-lg ${
+                            h === selectedHour
+                              ? "bg-[#B9E84A] text-[#171917]"
+                              : "bg-[#B9E84A]/12 border border-[#B9E84A]/30 text-[#B9E84A]"
+                          }`}
+                        >
+                          {slotLabel(h)}
                         </span>
-                      )}
-                    </span>
-                  ))}
-                  {usedSlots.map(s => (
-                    <span
-                      key={s.hour}
-                      className={`inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg line-through decoration-[#3A3D35] ${
-                        filterHour === s.hour
-                          ? "bg-red-500/15 border border-red-500/30 text-red-400/60"
-                          : "bg-[#1A1C18] border border-[#2E3129] text-[#4A4D47]"
-                      }`}
-                    >
-                      {slotLabel(s.hour)}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {available.length === 0 && (
-        <div className="bg-[#222520] border border-[#2E3129] rounded-2xl px-5 py-8 text-center">
-          <div className="text-2xl mb-2">😔</div>
-          <div className="text-sm font-semibold text-[#E8EBE4] mb-1">
-            No available trainers{filterLabel ? ` at ${filterLabel}` : ""} on {selectedDayLabel}
-          </div>
-          <div className="text-xs text-[#6B6E67]">All trainers are fully booked or not working</div>
-        </div>
-      )}
-
-      {/* Fully booked */}
-      {full.length > 0 && (
-        <div className="bg-[#222520] border border-[#2E3129] rounded-2xl overflow-hidden">
-          <div className="px-5 py-3 border-b border-[#1A1C18] flex items-center gap-2">
-            <Users size={13} className="text-red-400" />
-            <span className="text-sm font-semibold text-[#E8EBE4]">Fully Booked</span>
-            {filterLabel && <span className="text-xs text-[#6B6E67]">at {filterLabel}</span>}
-          </div>
-          <div className="divide-y divide-[#1A1C18]">
-            {full.map(({ trainer, freeSlots, usedSlots }) => (
-              <div key={trainer.id} className="px-5 py-4 opacity-60">
-                <div className="flex items-center gap-3 mb-2">
-                  <Avatar firstName={trainer.first_name} lastName={trainer.last_name} src={trainer.profile_picture_url} size="sm" />
-                  <div className="flex-1">
-                    <div className="text-sm font-medium text-[#E8EBE4]">{trainer.first_name} {trainer.last_name}</div>
-                    <div className="text-[11px] text-[#6B6E67]">
-                      {filterLabel ? `booked at ${filterLabel}` : `${usedSlots.length} slots — all booked`}
+                      ))}
                     </div>
                   </div>
-                  <span className="text-[10px] text-red-400 bg-red-500/10 border border-red-500/20 px-2 py-0.5 rounded-full font-medium flex-shrink-0">FULL</span>
-                </div>
-                {/* Show all slots when no time filter; show only the relevant slot when filtered */}
-                <div className="flex flex-wrap gap-1.5">
-                  {(filterHour !== null
-                    ? [...freeSlots, ...usedSlots].filter(s => s.hour === filterHour)
-                    : usedSlots
-                  ).map(s => (
-                    <span key={s.hour} className="inline-flex items-center bg-red-500/10 border border-red-500/20 text-red-400/60 text-[11px] px-2.5 py-1 rounded-lg">
-                      {slotLabel(s.hour)}
-                    </span>
-                  ))}
-                </div>
+                ))}
               </div>
-            ))}
-          </div>
-        </div>
-      )}
+            </div>
+          ) : (
+            <div className="bg-[#222520] border border-[#2E3129] rounded-2xl px-5 py-8 text-center">
+              <div className="text-2xl mb-2">😔</div>
+              <div className="text-sm font-semibold text-[#E8EBE4] mb-1">No trainers available at {timeLabel}</div>
+              <div className="text-xs text-[#6B6E67]">Try a different time or day</div>
+            </div>
+          )}
 
-      {/* Not working */}
-      {off.length > 0 && (
-        <div className="bg-[#222520] border border-[#2E3129] rounded-2xl overflow-hidden">
-          <div className="px-5 py-3 border-b border-[#1A1C18]">
-            <span className="text-sm font-semibold text-[#E8EBE4]">Not Working</span>
-            <span className="text-xs text-[#6B6E67] ml-2">
-              {filterLabel ? `at ${filterLabel} on ${selectedDayLabel}` : `on ${selectedDayLabel}`}
-            </span>
-          </div>
-          <div className="px-5 py-3 flex flex-wrap gap-2">
-            {off.map(({ trainer }) => (
-              <div key={trainer.id} className="flex items-center gap-1.5 bg-[#1A1C18] border border-[#2E3129] px-2.5 py-1.5 rounded-lg opacity-50">
-                <Avatar firstName={trainer.first_name} lastName={trainer.last_name} size="xs" />
-                <span className="text-xs text-[#9B9E96]">{trainer.first_name}</span>
+          {/* Full */}
+          {full.length > 0 && (
+            <div className="bg-[#222520] border border-[#2E3129] rounded-2xl overflow-hidden">
+              <div className="px-5 py-3 border-b border-[#1A1C18] flex items-center gap-2">
+                <Users size={13} className="text-red-400" />
+                <span className="text-sm font-semibold text-[#E8EBE4]">Fully Booked at this time</span>
               </div>
-            ))}
-          </div>
+              <div className="px-5 py-3 flex flex-wrap gap-2">
+                {full.map((r: any) => (
+                  <div key={r.trainer.id} className="flex items-center gap-2 bg-[#1A1C18] border border-[#2E3129] px-3 py-2 rounded-xl">
+                    <Avatar firstName={r.trainer.first_name} lastName={r.trainer.last_name} size="xs" />
+                    <span className="text-xs text-[#9B9E96]">{r.trainer.first_name} {r.trainer.last_name}</span>
+                    <span className="text-[9px] text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded font-medium">FULL</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Not working */}
+          {off.length > 0 && (
+            <div className="bg-[#222520] border border-[#2E3129] rounded-2xl overflow-hidden">
+              <div className="px-5 py-3 border-b border-[#1A1C18]">
+                <span className="text-sm font-semibold text-[#E8EBE4]">Not Working</span>
+                <span className="text-xs text-[#6B6E67] ml-2">at this time</span>
+              </div>
+              <div className="px-5 py-3 flex flex-wrap gap-2">
+                {off.map((r: any) => (
+                  <div key={r.trainer.id} className="flex items-center gap-1.5 bg-[#1A1C18] border border-[#2E3129] px-2.5 py-1.5 rounded-lg opacity-50">
+                    <Avatar firstName={r.trainer.first_name} lastName={r.trainer.last_name} size="xs" />
+                    <span className="text-xs text-[#9B9E96]">{r.trainer.first_name}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
