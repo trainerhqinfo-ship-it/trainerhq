@@ -187,9 +187,14 @@ export default async function TrainerDetailPage({ params }: { params: Promise<{ 
                       </div>
                     </div>
                     <StatusBadge status={client.status} />
-                    <Link href={`/manager/clients/${client.id}`} className="text-xs text-[#9B9E96] hover:text-[#E8EBE4]">
-                      View →
-                    </Link>
+                    <div className="flex items-center gap-3">
+                      <Link href={`/manager/clients/${client.id}`} className="text-xs text-[#9B9E96] hover:text-[#E8EBE4]">
+                        View
+                      </Link>
+                      <Link href={`/manager/assignments/${a.id}/reassign`} className="text-xs text-orange-400 hover:text-orange-300 font-medium">
+                        Reassign
+                      </Link>
+                    </div>
                   </div>
                 );
               })}

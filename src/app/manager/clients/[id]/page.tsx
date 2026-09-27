@@ -5,7 +5,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { StatusBadge } from "@/components/ui/badge";
 import { formatDate, formatTime, DAY_NAMES_FULL } from "@/lib/utils";
 import Link from "next/link";
-import { Edit, UserCheck } from "lucide-react";
+import { Edit, UserCheck, RefreshCw, Star } from "lucide-react";
 
 export default async function ClientDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -23,19 +23,25 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
     { data: assignment },
     { data: pkg },
     { data: sessionsRaw },
+    { data: feedbackRaw },
   ] = await Promise.all([
     supabase.from("pt_clients").select("*").eq("id", id).eq("gym_id", gymId).single(),
-    supabase.from("pt_assignments").select("*, trainers(*)").eq("client_id", id).eq("status", "active").single(),
-    supabase.from("pt_packages").select("*").eq("client_id", id).eq("is_active", true).single(),
-    supabase.from("pt_sessions").select("*, trainers(first_name, last_name)").eq("client_id", id).order("session_date", { ascending: false }).limit(10),
+    supabase.from("pt_assignments").select("*, trainers(*)").eq("client_id", id).eq("status", "active").maybeSingle(),
+    supabase.from("pt_packages").select("*").eq("client_id", id).eq("is_active", true).maybeSingle(),
+    supabase.from("pt_sessions").select("*, trainers(first_name, last_name)").eq("client_id", id).order("session_date", { ascending: false }).limit(20),
+    supabase.from("trainer_feedback").select("*").eq("client_id", id).order("created_at", { ascending: false }).limit(5),
   ]);
 
   if (!client) notFound();
 
   const sessions = sessionsRaw ?? [];
+  const feedback = feedbackRaw ?? [];
   const completed = sessions.filter((s: any) => s.status === "completed").length;
-  const remaining = pkg ? pkg.total_sessions - completed : null;
+  const remaining = pkg ? pkg.total_sessions - completed : (assignment as any)?.total_sessions ? Math.max(0, (assignment as any).total_sessions - completed) : null;
   const trainer = (assignment as any)?.trainers;
+  const avgRating = feedback.length > 0
+    ? (feedback.reduce((s: number, f: any) => s + (f.overall_rating ?? 0), 0) / feedback.length).toFixed(1)
+    : null;
 
   return (
     <div>
@@ -44,12 +50,21 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
         subtitle="PT Client"
         actions={
           <div className="flex gap-2">
-            <Link
-              href={`/manager/assignments/new?client=${id}`}
-              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-[#B9E84A] text-[#171917] text-xs font-medium hover:bg-[#A8D63A] transition-colors border border-[#A8D63A]"
-            >
-              <UserCheck size={12} /> Assign Trainer
-            </Link>
+            {assignment ? (
+              <Link
+                href={`/manager/assignments/${(assignment as any).id}/reassign`}
+                className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-orange-500/10 border border-orange-500/30 text-xs font-medium text-orange-400 hover:bg-orange-500/20 transition-colors"
+              >
+                <RefreshCw size={12} /> Reassign Trainer
+              </Link>
+            ) : (
+              <Link
+                href={`/manager/assignments/new?client=${id}`}
+                className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-[#B9E84A] text-[#171917] text-xs font-medium hover:bg-[#A8D63A] transition-colors"
+              >
+                <UserCheck size={12} /> Assign Trainer
+              </Link>
+            )}
             <Link
               href={`/manager/clients/${id}/edit`}
               className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[#2E3129] text-xs font-medium text-[#E8EBE4] hover:bg-[#1A1C18] transition-colors"
@@ -106,11 +121,17 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
                     </div>
                   )}
                 </div>
-                {client.notes && (
-                  <p className="mt-3 text-xs text-[#9B9E96] bg-[#1A1C18] rounded-lg p-3 leading-relaxed">
-                    {client.notes}
-                  </p>
-                )}
+                <div className="mt-4 pt-4 border-t border-[#1A1C18]">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs text-[#9B9E96]">Notes</span>
+                    <Link href={`/manager/clients/${id}/edit`} className="text-[10px] text-[#6B6E67] hover:text-[#E8EBE4]">Edit notes →</Link>
+                  </div>
+                  {client.notes ? (
+                    <p className="text-xs text-[#9B9E96] bg-[#1A1C18] rounded-lg p-3 leading-relaxed">{client.notes}</p>
+                  ) : (
+                    <p className="text-xs text-[#6B6E67] italic">No notes yet — add via Edit</p>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -202,6 +223,44 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
             </tbody>
           </table>
         </div>
+
+        {/* Client Feedback */}
+        {feedback.length > 0 && (
+          <div className="bg-[#222520] border border-[#2E3129] rounded-2xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-[#2E3129] flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-[#E8EBE4]">Client Feedback</h3>
+              {avgRating && (
+                <div className="flex items-center gap-1.5">
+                  <div className="flex gap-0.5">
+                    {[1,2,3,4,5].map(n => (
+                      <Star key={n} size={11} className={n <= Math.round(Number(avgRating)) ? "text-amber-400 fill-amber-400" : "text-[#2E3129] fill-[#2E3129]"} />
+                    ))}
+                  </div>
+                  <span className="text-xs text-[#9B9E96]">{avgRating} avg</span>
+                </div>
+              )}
+            </div>
+            <div className="divide-y divide-[#1A1C18]">
+              {feedback.map((f: any) => (
+                <div key={f.id} className="px-5 py-4">
+                  <div className="flex items-center gap-1 mb-1.5">
+                    {[1,2,3,4,5].map(n => (
+                      <Star key={n} size={11} className={n <= (f.overall_rating ?? 0) ? "text-amber-400 fill-amber-400" : "text-[#2E3129] fill-[#2E3129]"} />
+                    ))}
+                  </div>
+                  <div className="flex gap-3 text-[10px] text-[#9B9E96] mb-1.5">
+                    {f.is_punctual !== null && <span>{f.is_punctual ? "✓ Punctual" : "✗ Not punctual"}</span>}
+                    {f.satisfied_with_progress !== null && <span>{f.satisfied_with_progress ? "✓ Progress" : "✗ No progress"}</span>}
+                    {f.would_continue !== null && <span>{f.would_continue ? "✓ Would continue" : "✗ Would not continue"}</span>}
+                  </div>
+                  {f.written_feedback && (
+                    <p className="text-xs text-[#9B9E96] italic">&quot;{f.written_feedback}&quot;</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
