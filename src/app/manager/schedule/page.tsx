@@ -42,7 +42,7 @@ export default async function SchedulePage({
       .eq("gym_id", gymId)
       .lte("start_date", targetDate)
       .gte("end_date", targetDate),
-    (supabase as any).from("trainer_blocked_slots")
+    supabase.from("trainer_blocked_slots" as any)
       .select("*")
       .eq("gym_id", gymId)
       .eq("blocked_date", targetDate),

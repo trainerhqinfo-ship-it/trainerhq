@@ -2,7 +2,7 @@
 import { useRouter } from "next/navigation";
 import { Avatar } from "@/components/ui/avatar";
 import { formatTime } from "@/lib/utils";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, CalendarCheck } from "lucide-react";
 
 interface SlotData {
   time: string;
@@ -124,14 +124,22 @@ export function ScheduleGrid({ date, slots, gridData }: ScheduleGridProps) {
       <div className="flex items-center justify-between bg-[#222520] border border-[#2E3129] rounded-xl px-4 py-3">
         <button
           onClick={() => changeDate(-1)}
-          className="w-8 h-8 rounded-lg border border-[#2E3129] flex items-center justify-center hover:bg-[#1A1C18] transition-colors"
+          className="w-8 h-8 rounded-lg border border-[#2E3129] flex items-center justify-center hover:bg-[#1A1C18] transition-colors text-[#E8EBE4]"
         >
           <ChevronLeft size={15} />
         </button>
-        <div className="text-sm font-medium text-[#E8EBE4]">{displayDate}</div>
+        <div className="flex items-center gap-3">
+          <span className="text-sm font-medium text-[#E8EBE4]">{displayDate}</span>
+          <button
+            onClick={() => router.push("/manager/schedule")}
+            className="flex items-center gap-1 text-xs border border-[#2E3129] text-[#9B9E96] px-2.5 py-1 rounded-lg hover:bg-[#1A1C18] transition-colors"
+          >
+            <CalendarCheck size={11} /> Today
+          </button>
+        </div>
         <button
           onClick={() => changeDate(1)}
-          className="w-8 h-8 rounded-lg border border-[#2E3129] flex items-center justify-center hover:bg-[#1A1C18] transition-colors"
+          className="w-8 h-8 rounded-lg border border-[#2E3129] flex items-center justify-center hover:bg-[#1A1C18] transition-colors text-[#E8EBE4]"
         >
           <ChevronRight size={15} />
         </button>
