@@ -20,7 +20,7 @@ export function CommissionEditor({ trainerId, gymId, commissionType, commissionV
   const displayText = commissionType
     ? commissionType === "percentage"
       ? `${commissionValue}% of session revenue`
-      : `₹${(commissionValue ?? 0).toLocaleString("en-IN")}/session`
+      : `₹${(commissionValue ?? 0).toLocaleString("en-IN")}/client`
     : "Not set";
 
   const handleSave = async () => {
@@ -138,7 +138,7 @@ export function CommissionEditor({ trainerId, gymId, commissionType, commissionV
           onChange={e => setType(e.target.value)}
           className="flex-1 text-xs border border-[#2E3129] rounded-lg px-2 py-1.5 bg-[#222520] text-[#E8EBE4] focus:outline-none focus:border-[#B9E84A]"
         >
-          <option value="fixed_per_session">Fixed per session (₹)</option>
+          <option value="fixed_per_session">Fixed per client (₹)</option>
           <option value="percentage">Percentage of session revenue (%)</option>
         </select>
         <div className="relative w-28">

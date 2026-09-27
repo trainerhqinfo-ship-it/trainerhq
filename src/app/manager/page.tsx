@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { createClient, getSessionUser } from "@/lib/supabase/server";
-import { AlertTriangle, Bell, Plus, Link2, CalendarDays } from "lucide-react";
+import { AlertTriangle, Bell, Plus, Link2, CalendarDays, UserPlus, Users } from "lucide-react";
 import Link from "next/link";
 
 interface HourBucket {
@@ -205,6 +205,36 @@ export default async function ManagerDashboard() {
       </div>
 
       <div className="px-8 py-6 space-y-5">
+        {/* Primary CTAs */}
+        <div className="grid grid-cols-2 gap-4">
+          <Link
+            href="/manager/trainers/new"
+            className="group flex items-center gap-4 bg-[#B9E84A] rounded-2xl px-5 py-4 hover:bg-[#A8D63A] transition-colors"
+          >
+            <div className="w-10 h-10 rounded-xl bg-[#171917]/15 flex items-center justify-center flex-shrink-0">
+              <UserPlus size={18} className="text-[#171917]" />
+            </div>
+            <div>
+              <div className="text-sm font-bold text-[#171917]">Add Trainer</div>
+              <div className="text-[11px] text-[#171917]/60 mt-0.5">Onboard a new PT trainer</div>
+            </div>
+            <Plus size={16} className="ml-auto text-[#171917]/50 group-hover:text-[#171917] transition-colors" />
+          </Link>
+          <Link
+            href="/manager/clients/new"
+            className="group flex items-center gap-4 bg-[#222520] border border-[#B9E84A]/40 rounded-2xl px-5 py-4 hover:border-[#B9E84A] hover:bg-[#1E2020] transition-colors"
+          >
+            <div className="w-10 h-10 rounded-xl bg-[#B9E84A]/15 flex items-center justify-center flex-shrink-0">
+              <Users size={18} className="text-[#B9E84A]" />
+            </div>
+            <div>
+              <div className="text-sm font-bold text-[#E8EBE4]">Add PT Client</div>
+              <div className="text-[11px] text-[#6B6E67] mt-0.5">Register a new PT member</div>
+            </div>
+            <Plus size={16} className="ml-auto text-[#6B6E67] group-hover:text-[#B9E84A] transition-colors" />
+          </Link>
+        </div>
+
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <KpiCard label="Total Trainers" value={active.length} />
           <KpiCard label="Active PT Clients" value={clientsRaw?.length ?? 0} />
