@@ -86,10 +86,16 @@ export function AvailabilityFinder({ trainers, workingHours, assignments }: Prop
 
       const max = trainer.max_clients_per_slot ?? 1;
 
+      // empty days_of_week means the assignment applies every day
+      const matchesDay = (a: Assignment) => {
+        const d = a.days_of_week;
+        return !d || d.length === 0 || d.includes(selectedDay);
+      };
+
       // how many assignments at the selected hour
       const used = assignments.filter(a => {
         if (a.trainer_id !== trainer.id) return false;
-        if (!a.days_of_week?.includes(selectedDay)) return false;
+        if (!matchesDay(a)) return false;
         const [ah] = (a.preferred_time ?? "").split(":").map(Number);
         return ah === selectedHour;
       }).length;
@@ -102,7 +108,7 @@ export function AvailabilityFinder({ trainers, workingHours, assignments }: Prop
       for (let h = sh; h < eh; h++) {
         const u = assignments.filter(a => {
           if (a.trainer_id !== trainer.id) return false;
-          if (!a.days_of_week?.includes(selectedDay)) return false;
+          if (!matchesDay(a)) return false;
           const [ah] = (a.preferred_time ?? "").split(":").map(Number);
           return ah === h;
         }).length;
