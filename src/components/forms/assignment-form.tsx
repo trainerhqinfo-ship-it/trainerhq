@@ -1,0 +1,237 @@
+"use client";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
+import { Button } from "@/components/ui/button";
+import { Input, Select } from "@/components/ui/input";
+import { Avatar } from "@/components/ui/avatar";
+import { DAY_NAMES_FULL, formatTime } from "@/lib/utils";
+import type { Trainer, PtClient } from "@/types/database";
+
+interface AssignmentFormProps {
+  trainers: (Trainer & { pt_assignments?: any[]; trainer_working_hours?: any[] })[];
+  clients: PtClient[];
+  preselectedClientId?: string;
+}
+
+export function AssignmentForm({ trainers, clients, preselectedClientId }: AssignmentFormProps) {
+  const router = useRouter();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const [formData, setFormData] = useState({
+    client_id: preselectedClientId ?? "",
+    trainer_id: "",
+    preferred_time: "19:00",
+    days_of_week: [1, 3, 5] as number[],
+    start_date: new Date().toISOString().split("T")[0],
+    notes: "",
+  });
+
+  function toggleDay(d: number) {
+    setFormData(prev => ({
+      ...prev,
+      days_of_week: prev.days_of_week.includes(d)
+        ? prev.days_of_week.filter(x => x !== d)
+        : [...prev.days_of_week, d].sort(),
+    }));
+  }
+
+  // Calculate trainer availability for selected time
+  function getTrainerCapacity(trainer: AssignmentFormProps["trainers"][0]) {
+    const timeHour = parseInt(formData.preferred_time.split(":")[0]);
+    const assignedAtTime = (trainer.pt_assignments ?? []).filter(a => {
+      if (a.status !== "active") return false;
+      const aHour = parseInt((a.preferred_time as string).split(":")[0]);
+      const daysOverlap = formData.days_of_week.some(d => (a.days_of_week as number[])?.includes(d));
+      return aHour === timeHour && daysOverlap;
+    });
+    return {
+      current: assignedAtTime.length,
+      max: trainer.max_clients_per_slot,
+      available: trainer.max_clients_per_slot - assignedAtTime.length,
+    };
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { setError("Not authenticated."); setLoading(false); return; }
+    const { data: profile } = await supabase.from("profiles").select("gym_id").eq("id", user.id).single();
+    const gymId = profile?.gym_id;
+    if (!gymId) { setError("Could not determine gym."); setLoading(false); return; }
+
+    // Frontend capacity pre-check
+    const trainer = trainers.find(t => t.id === formData.trainer_id);
+    if (trainer) {
+      const cap = getTrainerCapacity(trainer);
+      if (cap.available <= 0) {
+        setError(`${trainer.first_name} is at full capacity for this time slot.`);
+        setLoading(false);
+        return;
+      }
+    }
+
+    // Server-side capacity double-check
+    const timeHour = parseInt(formData.preferred_time.split(":")[0]);
+    const { count } = await supabase
+      .from("pt_assignments")
+      .select("id", { count: "exact", head: true })
+      .eq("trainer_id", formData.trainer_id)
+      .eq("status", "active")
+      .filter("preferred_time", "gte", `${String(timeHour).padStart(2,"0")}:00`)
+      .filter("preferred_time", "lt", `${String(timeHour+1).padStart(2,"0")}:00`);
+
+    const trainerObj = trainers.find(t => t.id === formData.trainer_id);
+    if (trainerObj && (count ?? 0) >= trainerObj.max_clients_per_slot) {
+      setError(`${trainerObj.first_name} is at full capacity (${count}/${trainerObj.max_clients_per_slot}) — assignment blocked.`);
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const { data: assignment, error: err } = await supabase.from("pt_assignments").insert({
+        gym_id: gymId,
+        client_id: formData.client_id,
+        trainer_id: formData.trainer_id,
+        days_of_week: formData.days_of_week,
+        preferred_time: formData.preferred_time,
+        start_date: formData.start_date,
+        notes: formData.notes || null,
+        assigned_by: user.id,
+        status: "active",
+      }).select().single();
+
+      if (err) throw err;
+
+      await supabase.from("audit_logs").insert({
+        gym_id: gymId,
+        user_id: user.id,
+        action: "client_assigned",
+        entity_type: "pt_assignment",
+        entity_id: assignment.id,
+        new_values: { client_id: formData.client_id, trainer_id: formData.trainer_id },
+      });
+
+      router.push("/manager/assignments");
+    } catch (err: any) {
+      setError(err.message ?? "Something went wrong.");
+      setLoading(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-5">
+      <div className="bg-[#222520] border border-[#2E3129] rounded-2xl p-6 space-y-5">
+        <Select
+          label="Client *"
+          value={formData.client_id}
+          onChange={e => setFormData(p => ({ ...p, client_id: e.target.value }))}
+          required
+          options={[
+            { value: "", label: "Select client..." },
+            ...clients.map(c => ({ value: c.id, label: `${c.first_name} ${c.last_name}` })),
+          ]}
+        />
+
+        <div>
+          <label className="text-xs font-medium text-[#E8EBE4] mb-2 block">Schedule Days</label>
+          <div className="flex gap-2">
+            {[0,1,2,3,4,5,6].map(d => (
+              <button
+                key={d}
+                type="button"
+                onClick={() => toggleDay(d)}
+                className={`w-9 h-9 rounded-lg text-xs font-medium border transition-colors ${
+                  formData.days_of_week.includes(d)
+                    ? "bg-[#B9E84A] text-[#171917] border-[#A8D63A]"
+                    : "bg-[#222520] text-[#6B6E67] border-[#2E3129] hover:border-[#E8EBE4]"
+                }`}
+              >
+                {DAY_NAMES_FULL[d].slice(0, 2)}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <Input
+          label="Preferred Time *"
+          type="time"
+          value={formData.preferred_time}
+          onChange={e => setFormData(p => ({ ...p, preferred_time: e.target.value }))}
+          required
+        />
+
+        {/* Trainer selection with capacity */}
+        <div>
+          <label className="text-xs font-medium text-[#E8EBE4] mb-2 block">
+            Select Trainer — capacity at {formatTime(formData.preferred_time)}
+          </label>
+          <div className="space-y-2">
+            {trainers.map(trainer => {
+              const cap = getTrainerCapacity(trainer);
+              const isFull = cap.available <= 0;
+              return (
+                <button
+                  key={trainer.id}
+                  type="button"
+                  disabled={isFull}
+                  onClick={() => setFormData(p => ({ ...p, trainer_id: trainer.id }))}
+                  className={`w-full flex items-center justify-between p-3 rounded-xl border text-left transition-colors ${
+                    formData.trainer_id === trainer.id
+                      ? "bg-[#B9E84A]/10 border-[#B9E84A]"
+                      : isFull
+                        ? "bg-[#1A1C18] border-[#2E3129] opacity-60 cursor-not-allowed"
+                        : "bg-[#222520] border-[#2E3129] hover:border-[#E8EBE4]"
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <Avatar firstName={trainer.first_name} lastName={trainer.last_name} size="sm" />
+                    <div>
+                      <div className="text-sm font-medium text-[#E8EBE4]">
+                        {trainer.first_name} {trainer.last_name}
+                      </div>
+                      <div className="text-xs text-[#6B6E67]">{trainer.specializations?.slice(0, 2).join(", ")}</div>
+                    </div>
+                  </div>
+                  <div className={`px-2.5 py-1 rounded-lg text-xs font-semibold border tabular-nums ${
+                    isFull
+                      ? "bg-red-500/10 text-red-400 border-red-500/30"
+                      : cap.current > 0
+                        ? "bg-orange-500/10 text-orange-400 border-orange-500/30"
+                        : "bg-[#B9E84A]/15 text-[#B9E84A] border-[#B9E84A]/40"
+                  }`}>
+                    {cap.current}/{cap.max}
+                    {isFull ? " FULL" : ` · ${cap.available} open`}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <Input
+          label="Start Date"
+          type="date"
+          value={formData.start_date}
+          onChange={e => setFormData(p => ({ ...p, start_date: e.target.value }))}
+        />
+      </div>
+
+      {error && (
+        <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">{error}</div>
+      )}
+
+      <div className="flex justify-end gap-3">
+        <Button type="button" variant="ghost" onClick={() => router.back()}>Cancel</Button>
+        <Button type="submit" variant="primary" loading={loading} disabled={!formData.client_id || !formData.trainer_id}>
+          Create Assignment
+        </Button>
+      </div>
+    </form>
+  );
+}
