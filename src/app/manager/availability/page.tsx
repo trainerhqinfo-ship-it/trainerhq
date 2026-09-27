@@ -72,6 +72,7 @@ export default async function ManagerAvailabilityPage() {
           trainers={activeTrainers as any}
           workingHours={workingHours}
           assignments={assignments as any}
+          leaves={leaves as any}
         />
 
         {/* Weekly schedule grid */}

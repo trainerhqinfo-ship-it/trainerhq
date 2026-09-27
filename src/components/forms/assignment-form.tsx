@@ -163,7 +163,10 @@ export function AssignmentForm({ trainers, clients, preselectedClientId }: Assig
     const assignedAtTime = (trainer.pt_assignments ?? []).filter(a => {
       if (a.status !== "active") return false;
       const aHour = parseInt((a.preferred_time as string).split(":")[0]);
-      const daysOverlap = formData.days_of_week.some(d => (a.days_of_week as number[])?.includes(d));
+      const aDays = a.days_of_week as number[];
+      const daysOverlap = !aDays || aDays.length === 0
+        ? true
+        : formData.days_of_week.some(d => aDays.includes(d));
       return aHour === timeHour && daysOverlap;
     });
     return {

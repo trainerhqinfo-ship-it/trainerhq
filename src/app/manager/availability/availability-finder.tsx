@@ -54,14 +54,31 @@ interface Assignment {
   preferred_time: string;
 }
 
+interface Leave {
+  trainer_id: string;
+  start_date: string;
+  end_date: string;
+}
+
+type TrainerStatus = "available" | "partial" | "full" | "off" | "leave";
+
 interface Props {
   trainers: Trainer[];
   workingHours: WorkingHour[];
   assignments: Assignment[];
+  leaves?: Leave[];
 }
 
-export function AvailabilityFinder({ trainers, workingHours, assignments }: Props) {
+function capacityBadgeClass(used: number, max: number): string {
+  if (used === 0) return "bg-[#B9E84A]/10 border-[#B9E84A]/30 text-[#B9E84A]";
+  const ratio = used / max;
+  if (ratio < 0.67) return "bg-yellow-500/10 border-yellow-500/30 text-yellow-400";
+  return "bg-orange-500/10 border-orange-500/30 text-orange-400";
+}
+
+export function AvailabilityFinder({ trainers, workingHours, assignments, leaves = [] }: Props) {
   const todayDow = new Date().getDay();
+  const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
   const nowH = new Date().getHours();
   const defaultHour = Math.min(Math.max(nowH, 5), 22);
 
@@ -69,22 +86,39 @@ export function AvailabilityFinder({ trainers, workingHours, assignments }: Prop
   const [selectedHour, setSelectedHour] = useState(defaultHour);
   const [searched, setSearched] = useState(false);
 
+  const todayLeaveIds = useMemo(() => {
+    const ids = new Set<string>();
+    leaves.forEach(l => {
+      if (l.start_date <= todayStr && l.end_date >= todayStr) ids.add(l.trainer_id);
+    });
+    return ids;
+  }, [leaves, todayStr]);
+
   const results = useMemo(() => {
     if (!searched) return null;
 
     return trainers.map(trainer => {
+      const max = trainer.max_clients_per_slot ?? 1;
+
+      // Show leave only when searching for today's day-of-week
+      if (selectedDay === todayDow && todayLeaveIds.has(trainer.id)) {
+        return { trainer, status: "leave" as TrainerStatus, daySlots: [], used: 0, max, open: max };
+      }
+
       const wh = workingHours.find(
         w => w.trainer_id === trainer.id && w.day_of_week === selectedDay
       );
 
-      if (!wh || !wh.is_working_day) return { trainer, status: "off" as const, freeSlots: [], used: 0, max: 0 };
+      if (!wh || !wh.is_working_day) {
+        return { trainer, status: "off" as TrainerStatus, daySlots: [], used: 0, max, open: 0 };
+      }
 
       const [sh] = wh.start_time.split(":").map(Number);
       const [eh] = wh.end_time.split(":").map(Number);
 
-      if (selectedHour < sh || selectedHour >= eh) return { trainer, status: "off" as const, freeSlots: [], used: 0, max: 0 };
-
-      const max = trainer.max_clients_per_slot ?? 1;
+      if (selectedHour < sh || selectedHour >= eh) {
+        return { trainer, status: "off" as TrainerStatus, daySlots: [], used: 0, max, open: 0 };
+      }
 
       // empty days_of_week means the assignment applies every day
       const matchesDay = (a: Assignment) => {
@@ -100,6 +134,8 @@ export function AvailabilityFinder({ trainers, workingHours, assignments }: Prop
         return ah === selectedHour;
       }).length;
 
+      const open = Math.max(0, max - used);
+
       // collect all slots for the day with their booking count
       const daySlots: { hour: number; used: number }[] = [];
       for (let h = sh; h < eh; h++) {
@@ -112,15 +148,20 @@ export function AvailabilityFinder({ trainers, workingHours, assignments }: Prop
         daySlots.push({ hour: h, used: u });
       }
 
-      // green = 0 clients booked; red = any clients booked
-      const status = used === 0 ? ("free" as const) : ("booked" as const);
-      return { trainer, status, daySlots, used, max };
-    });
-  }, [searched, selectedDay, selectedHour, trainers, workingHours, assignments]);
+      let status: TrainerStatus;
+      if (used === 0) status = "available";
+      else if (used < max) status = "partial";
+      else status = "full";
 
-  const free   = results?.filter(r => r.status === "free")   ?? [];
-  const booked = results?.filter(r => r.status === "booked") ?? [];
-  const off    = results?.filter(r => r.status === "off")    ?? [];
+      return { trainer, status, daySlots, used, max, open };
+    });
+  }, [searched, selectedDay, selectedHour, trainers, workingHours, assignments, todayDow, todayLeaveIds]);
+
+  // Trainers with any open capacity, sorted by most open first
+  const hasCapacity = [...(results?.filter(r => r.status === "available" || r.status === "partial") ?? [])]
+    .sort((a, b) => (b.open ?? 0) - (a.open ?? 0));
+  const full       = results?.filter(r => r.status === "full")  ?? [];
+  const notWorking = results?.filter(r => r.status === "off" || r.status === "leave") ?? [];
 
   const dayLabel  = DAY_OPTIONS.find(d => d.value === selectedDay)?.label ?? "";
   const timeLabel = TIME_OPTIONS.find(t => t.value === selectedHour)?.label ?? "";
@@ -131,7 +172,7 @@ export function AvailabilityFinder({ trainers, workingHours, assignments }: Prop
       <div className="bg-[#222520] border border-[#2E3129] rounded-2xl p-5 space-y-4">
         <div>
           <h2 className="text-sm font-semibold text-[#E8EBE4]">Find Available Trainer</h2>
-          <p className="text-[11px] text-[#6B6E67] mt-0.5">Select a day and time to see who is free</p>
+          <p className="text-[11px] text-[#6B6E67] mt-0.5">Select a day and time to see trainer capacity</p>
         </div>
 
         <div className="flex flex-wrap gap-3 items-end">
@@ -182,36 +223,41 @@ export function AvailabilityFinder({ trainers, workingHours, assignments }: Prop
             <span className="text-[#3A3D35]">·</span>
             <span className="flex items-center gap-1.5 bg-[#B9E84A]/10 border border-[#B9E84A]/30 px-2.5 py-1 rounded-full">
               <CheckCircle size={10} className="text-[#B9E84A]" />
-              <span className="text-[#B9E84A] font-semibold">{free.length}</span>
-              <span className="text-[#B9E84A]/70">free</span>
+              <span className="text-[#B9E84A] font-semibold">{hasCapacity.length}</span>
+              <span className="text-[#B9E84A]/70">have capacity</span>
             </span>
             <span className="flex items-center gap-1.5 bg-red-500/10 border border-red-500/25 px-2.5 py-1 rounded-full">
               <XCircle size={10} className="text-red-400" />
-              <span className="text-red-400 font-semibold">{booked.length}</span>
-              <span className="text-red-400/70">booked</span>
+              <span className="text-red-400 font-semibold">{full.length}</span>
+              <span className="text-red-400/70">full</span>
             </span>
             <span className="flex items-center gap-1.5 bg-[#1A1C18] border border-[#2E3129] px-2.5 py-1 rounded-full">
-              <span className="text-[#6B6E67] font-semibold">{off.length}</span>
-              <span className="text-[#6B6E67]">not working</span>
+              <span className="text-[#6B6E67] font-semibold">{notWorking.length}</span>
+              <span className="text-[#6B6E67]">unavailable</span>
             </span>
           </div>
 
-          {/* Free trainers */}
-          {free.length > 0 ? (
+          {/* Has Capacity — available + partial, sorted by most open */}
+          {hasCapacity.length > 0 ? (
             <div className="bg-[#222520] border border-[#B9E84A]/25 rounded-2xl overflow-hidden">
               <div className="px-5 py-3 border-b border-[#B9E84A]/15 flex items-center gap-2">
                 <CheckCircle size={13} className="text-[#B9E84A]" />
-                <span className="text-sm font-semibold text-[#E8EBE4]">Free</span>
-                <span className="text-xs text-[#9B9E96]">— no clients booked at this time</span>
+                <span className="text-sm font-semibold text-[#E8EBE4]">Has Capacity</span>
+                <span className="text-xs text-[#9B9E96]">— sorted by most open</span>
               </div>
               <div className="divide-y divide-[#1A1C18]">
-                {free.map((r: any) => (
+                {hasCapacity.map((r: any) => (
                   <div key={r.trainer.id} className="px-5 py-4 hover:bg-[#1E2020]/50 transition-colors">
                     <div className="flex items-center gap-3 mb-3">
                       <Avatar firstName={r.trainer.first_name} lastName={r.trainer.last_name} src={r.trainer.profile_picture_url} size="sm" />
                       <div className="flex-1 min-w-0">
                         <div className="text-sm font-semibold text-[#E8EBE4]">{r.trainer.first_name} {r.trainer.last_name}</div>
-                        <div className="text-[11px] text-[#B9E84A] mt-0.5">0/{r.max} clients — completely free</div>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className={`inline-flex items-center text-[11px] font-semibold px-2 py-0.5 rounded-md border ${capacityBadgeClass(r.used, r.max)}`}>
+                            {r.used}/{r.max}
+                          </span>
+                          <span className="text-[11px] text-[#9B9E96]">{r.open} slot{r.open !== 1 ? "s" : ""} open at this time</span>
+                        </div>
                       </div>
                       <Link
                         href={`/manager/trainers/${r.trainer.id}`}
@@ -220,23 +266,37 @@ export function AvailabilityFinder({ trainers, workingHours, assignments }: Prop
                         View <ChevronRight size={11} />
                       </Link>
                     </div>
-                    {/* Other slots for the day */}
+                    {/* All day slots with capacity indicators */}
                     <div className="flex flex-wrap gap-1.5">
-                      {r.daySlots.map((s: any) => (
-                        <span
-                          key={s.hour}
-                          className={`inline-flex items-center gap-1 text-[11px] font-medium px-2.5 py-1 rounded-lg ${
-                            s.hour === selectedHour
-                              ? "bg-[#B9E84A] text-[#171917]"
-                              : s.used === 0
-                              ? "bg-[#B9E84A]/12 border border-[#B9E84A]/30 text-[#B9E84A]"
-                              : "bg-red-500/10 border border-red-500/25 text-red-400"
-                          }`}
-                        >
-                          {slotLabel(s.hour)}
-                          {s.used > 0 && <span className="text-[9px] opacity-70">{s.used}/{r.max}</span>}
-                        </span>
-                      ))}
+                      {r.daySlots.map((s: any) => {
+                        const isSearched = s.hour === selectedHour;
+                        const slotOpen = r.max - s.used;
+                        const slotFull = s.used >= r.max;
+                        return (
+                          <span
+                            key={s.hour}
+                            className={`inline-flex items-center gap-1 text-[11px] font-medium px-2.5 py-1 rounded-lg transition-colors ${
+                              isSearched
+                                ? slotFull
+                                  ? "bg-red-500 text-white"
+                                  : s.used > 0
+                                  ? "bg-yellow-400 text-[#171917]"
+                                  : "bg-[#B9E84A] text-[#171917]"
+                                : slotFull
+                                ? "bg-red-500/10 border border-red-500/25 text-red-400"
+                                : s.used > 0
+                                ? "bg-yellow-500/10 border border-yellow-500/25 text-yellow-400"
+                                : "bg-[#B9E84A]/12 border border-[#B9E84A]/30 text-[#B9E84A]"
+                            }`}
+                          >
+                            {slotLabel(s.hour)}
+                            {s.used > 0 && !slotFull && (
+                              <span className="text-[9px] opacity-80">{slotOpen} open</span>
+                            )}
+                            {slotFull && <span className="text-[9px] opacity-80">FULL</span>}
+                          </span>
+                        );
+                      })}
                     </div>
                   </div>
                 ))}
@@ -245,34 +305,29 @@ export function AvailabilityFinder({ trainers, workingHours, assignments }: Prop
           ) : (
             <div className="bg-[#222520] border border-[#2E3129] rounded-2xl px-5 py-8 text-center">
               <div className="text-2xl mb-2">😔</div>
-              <div className="text-sm font-semibold text-[#E8EBE4] mb-1">No free trainers at {timeLabel}</div>
+              <div className="text-sm font-semibold text-[#E8EBE4] mb-1">No available capacity at {timeLabel}</div>
               <div className="text-xs text-[#6B6E67]">Try a different time or day</div>
             </div>
           )}
 
-          {/* Booked trainers */}
-          {booked.length > 0 && (
+          {/* Full */}
+          {full.length > 0 && (
             <div className="bg-[#222520] border border-red-500/20 rounded-2xl overflow-hidden">
               <div className="px-5 py-3 border-b border-red-500/10 flex items-center gap-2">
                 <Users size={13} className="text-red-400" />
-                <span className="text-sm font-semibold text-[#E8EBE4]">Booked</span>
-                <span className="text-xs text-[#9B9E96]">— already has clients at this time</span>
+                <span className="text-sm font-semibold text-[#E8EBE4]">Full</span>
+                <span className="text-xs text-[#9B9E96]">— at maximum capacity</span>
               </div>
               <div className="divide-y divide-[#1A1C18]">
-                {booked.map((r: any) => (
-                  <div key={r.trainer.id} className="px-5 py-4 opacity-70">
-                    <div className="flex items-center gap-3 mb-2">
+                {full.map((r: any) => (
+                  <div key={r.trainer.id} className="px-5 py-3 opacity-70">
+                    <div className="flex items-center gap-3">
                       <Avatar firstName={r.trainer.first_name} lastName={r.trainer.last_name} src={r.trainer.profile_picture_url} size="sm" />
                       <div className="flex-1 min-w-0">
                         <div className="text-sm font-medium text-[#E8EBE4]">{r.trainer.first_name} {r.trainer.last_name}</div>
-                        <div className="text-[11px] text-red-400 mt-0.5">{r.used}/{r.max} clients booked</div>
                       </div>
-                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium flex-shrink-0 ${
-                        r.used >= r.max
-                          ? "text-red-400 bg-red-500/10 border border-red-500/20"
-                          : "text-orange-400 bg-orange-500/10 border border-orange-500/20"
-                      }`}>
-                        {r.used >= r.max ? "FULL" : `${r.used}/${r.max}`}
+                      <span className="text-[10px] px-2.5 py-1 rounded-full font-semibold text-red-400 bg-red-500/10 border border-red-500/20 flex-shrink-0">
+                        {r.used}/{r.max} FULL
                       </span>
                     </div>
                   </div>
@@ -281,18 +336,28 @@ export function AvailabilityFinder({ trainers, workingHours, assignments }: Prop
             </div>
           )}
 
-          {/* Not working */}
-          {off.length > 0 && (
+          {/* Not working / On leave */}
+          {notWorking.length > 0 && (
             <div className="bg-[#222520] border border-[#2E3129] rounded-2xl overflow-hidden">
               <div className="px-5 py-3 border-b border-[#1A1C18]">
-                <span className="text-sm font-semibold text-[#E8EBE4]">Not Working</span>
-                <span className="text-xs text-[#6B6E67] ml-2">at this time</span>
+                <span className="text-sm font-semibold text-[#E8EBE4]">Unavailable</span>
+                <span className="text-xs text-[#6B6E67] ml-2">not working or on leave at this time</span>
               </div>
               <div className="px-5 py-3 flex flex-wrap gap-2">
-                {off.map((r: any) => (
-                  <div key={r.trainer.id} className="flex items-center gap-1.5 bg-[#1A1C18] border border-[#2E3129] px-2.5 py-1.5 rounded-lg opacity-50">
+                {notWorking.map((r: any) => (
+                  <div
+                    key={r.trainer.id}
+                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border ${
+                      r.status === "leave"
+                        ? "bg-amber-500/8 border-amber-500/20"
+                        : "bg-[#1A1C18] border-[#2E3129] opacity-50"
+                    }`}
+                  >
                     <Avatar firstName={r.trainer.first_name} lastName={r.trainer.last_name} size="xs" />
                     <span className="text-xs text-[#9B9E96]">{r.trainer.first_name}</span>
+                    {r.status === "leave" && (
+                      <span className="text-[9px] text-amber-400 font-semibold">LEAVE</span>
+                    )}
                   </div>
                 ))}
               </div>

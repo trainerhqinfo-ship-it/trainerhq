@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { createClient, getSessionUser } from "@/lib/supabase/server";
 import { AlertTriangle, Bell, Plus, Link2, CalendarDays, UserPlus, Users } from "lucide-react";
 import Link from "next/link";
-import { PeakHoursChart } from "./peak-hours-chart";
+import { PeakHoursChart, type CapacityHour } from "./peak-hours-chart";
 
 function KpiCard({ label, value, accent = false }: { label: string; value: number | string; accent?: boolean }) {
   return (
@@ -38,42 +38,73 @@ export default async function ManagerDashboard() {
     { data: sessionsRaw },
     { data: leavesRaw },
     { data: flaggedRaw },
+    { data: assignmentsRaw },
   ] = await Promise.all([
     supabase.from("gyms").select("name, branch_name").eq("id", gymId).single(),
-    supabase.from("trainers").select("id, status, max_clients_per_slot, first_name, last_name").eq("gym_id", gymId),
+    supabase.from("trainers").select("id, status, max_clients_per_slot, first_name, last_name, trainer_working_hours(*)").eq("gym_id", gymId),
     supabase.from("pt_clients").select("id").eq("gym_id", gymId).eq("status", "active"),
     supabase.from("pt_sessions").select("id, status, start_time, trainer_id").eq("gym_id", gymId).eq("session_date", today),
     supabase.from("trainer_leaves").select("trainer_id").eq("gym_id", gymId).lte("start_date", today).gte("end_date", today),
     supabase.from("trainer_feedback").select("id").eq("gym_id", gymId).eq("is_flagged", true),
+    supabase.from("pt_assignments").select("trainer_id, days_of_week, preferred_time").eq("gym_id", gymId).eq("status", "active"),
   ]);
 
   const trainers = trainersRaw ?? [];
   const sessions = sessionsRaw ?? [];
   const leaves = leavesRaw ?? [];
   const flagged = flaggedRaw ?? [];
+  const assignments = assignmentsRaw ?? [];
 
-  const active = trainers.filter(t => t.status === "active");
+  const active = trainers.filter((t: any) => t.status === "active");
   const leaveIds = new Set(leaves.map((l: any) => l.trainer_id));
 
   const todayTotal = sessions.length;
   const todayCompleted = sessions.filter(s => s.status === "completed").length;
   const todayUpcoming = sessions.filter(s => s.status === "scheduled").length;
-  const totalCap = active.reduce((s, t) => s + (t.max_clients_per_slot || 0), 0);
-  const availableSlots = Math.max(0, totalCap - todayUpcoming);
 
-  const hourMap: Record<number, number> = {};
-  sessions.forEach(s => {
-    if (s.start_time) {
-      const h = parseInt(s.start_time.split(":")[0]);
-      hourMap[h] = (hourMap[h] || 0) + 1;
-    }
-  });
-  const peakHours: HourBucket[] = Object.entries(hourMap)
-    .map(([h, c]) => ({ hour: Number(h), count: c }))
-    .sort((a, b) => a.hour - b.hour);
+  // Today's day-of-week in IST (0=Sun … 6=Sat)
+  const todayDow = new Date(today + "T00:00:00").getDay();
+
+  // Available PT Capacity: for each working trainer not on leave today,
+  // sum (max_clients_per_slot – active assigned clients for today's DOW)
+  const availableSlots = active.reduce((sum: number, trainer: any) => {
+    if (leaveIds.has(trainer.id)) return sum;
+    const wh = (trainer.trainer_working_hours ?? []).find((w: any) => w.day_of_week === todayDow);
+    if (!wh || !wh.is_working_day) return sum;
+    const occupied = assignments.filter((a: any) => {
+      if (a.trainer_id !== trainer.id) return false;
+      const d = a.days_of_week as number[];
+      return !d || d.length === 0 || d.includes(todayDow);
+    }).length;
+    return sum + Math.max(0, (trainer.max_clients_per_slot || 0) - occupied);
+  }, 0);
+
+  // Capacity by hour: for each hour (6–21), occupied vs total across working trainers
+  const capacityByHour: CapacityHour[] = Array.from({ length: 17 }, (_, i) => i + 6).map(h => {
+    let occupied = 0, total = 0;
+    active.forEach((trainer: any) => {
+      if (leaveIds.has(trainer.id)) return;
+      const wh = (trainer.trainer_working_hours ?? []).find((w: any) => w.day_of_week === todayDow);
+      if (!wh || !wh.is_working_day) return;
+      const [sh] = wh.start_time.split(":").map(Number);
+      const [eh] = wh.end_time.split(":").map(Number);
+      if (h >= sh && h < eh) {
+        total += trainer.max_clients_per_slot || 0;
+        occupied += assignments.filter((a: any) => {
+          if (a.trainer_id !== trainer.id) return false;
+          const d = a.days_of_week as number[];
+          const dayMatch = !d || d.length === 0 || d.includes(todayDow);
+          if (!dayMatch) return false;
+          const [ah] = (a.preferred_time ?? "").split(":").map(Number);
+          return ah === h;
+        }).length;
+      }
+    });
+    return { hour: h, occupied, total };
+  }).filter(h => h.total > 0);
 
   const alerts: { text: string; severity: "high" | "medium" }[] = [];
-  active.forEach(t => {
+  active.forEach((t: any) => {
     if (leaveIds.has(t.id) && alerts.length < 2) {
       const affected = sessions.filter(s => s.trainer_id === t.id).length;
       if (affected > 0) {
@@ -160,13 +191,13 @@ export default async function ManagerDashboard() {
           <KpiCard label="Total Trainers" value={active.length} />
           <KpiCard label="Active PT Clients" value={clientsRaw?.length ?? 0} />
           <KpiCard label="Today's Sessions" value={todayTotal} />
-          <KpiCard label="Available PT Slots" value={availableSlots} accent />
+          <KpiCard label="Available PT Capacity" value={availableSlots} accent />
         </div>
 
         <div className="bg-[#222520] border border-[#2E3129] rounded-2xl p-5">
-          <h2 className="text-sm font-semibold text-[#E8EBE4]">PT Peak Hours</h2>
-          <p className="text-xs text-[#6B6E67] mt-0.5 mb-5">Sessions scheduled by hour today</p>
-          <PeakHoursChart data={peakHours} />
+          <h2 className="text-sm font-semibold text-[#E8EBE4]">PT Capacity by Hour</h2>
+          <p className="text-xs text-[#6B6E67] mt-0.5 mb-5">Occupied vs total capacity per hour today</p>
+          <PeakHoursChart data={capacityByHour} />
         </div>
 
         <div className="bg-[#222520] border border-[#2E3129] rounded-2xl p-5">
@@ -186,7 +217,7 @@ export default async function ManagerDashboard() {
             </div>
             <div>
               <div className="text-2xl font-bold text-[#E8EBE4] tabular-nums">{availableSlots}</div>
-              <div className="text-xs text-[#6B6E67] mt-0.5">Available Slots</div>
+              <div className="text-xs text-[#6B6E67] mt-0.5">Available Capacity</div>
             </div>
           </div>
         </div>
