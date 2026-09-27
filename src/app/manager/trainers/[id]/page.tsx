@@ -231,16 +231,20 @@ export default async function TrainerDetailPage({ params }: { params: Promise<{ 
                 </div>
                 <div className="p-4 space-y-2">
                   <div className="flex justify-between">
-                    <span className="text-xs text-[#9B9E96]">Completed sessions</span>
+                    <span className="text-xs text-[#9B9E96]">
+                      {payout.commission_type === "percentage" ? "Completed sessions" : "Active clients"}
+                    </span>
                     <span className="text-xs font-medium text-[#E8EBE4]">{payout.completed_sessions}</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-xs text-[#9B9E96]">Eligible revenue</span>
-                    <span className="text-xs font-medium text-[#E8EBE4]">{formatCurrency(payout.eligible_revenue)}</span>
-                  </div>
+                  {payout.commission_type === "percentage" && (
+                    <div className="flex justify-between">
+                      <span className="text-xs text-[#9B9E96]">Eligible revenue</span>
+                      <span className="text-xs font-medium text-[#E8EBE4]">{formatCurrency(payout.eligible_revenue)}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between">
                     <span className="text-xs text-[#9B9E96]">
-                      Commission ({payout.commission_type === "percentage" ? `${payout.commission_value}%` : `₹${payout.commission_value}/session`})
+                      Commission ({payout.commission_type === "percentage" ? `${payout.commission_value}%` : `₹${payout.commission_value}/client`})
                     </span>
                     <span className="text-xs font-medium text-[#E8EBE4]">{formatCurrency(payout.calculated_payout)}</span>
                   </div>

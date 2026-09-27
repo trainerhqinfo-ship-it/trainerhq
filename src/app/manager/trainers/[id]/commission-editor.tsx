@@ -78,27 +78,37 @@ export function CommissionEditor({ trainerId, gymId, commissionType, commissionV
     const periodStart = `${year}-${String(month).padStart(2, "0")}-01`;
     const periodEnd = `${nextYear}-${String(nextMonth).padStart(2, "0")}-01`;
 
-    const { data: sessions } = await supabase
-      .from("pt_sessions")
-      .select("session_revenue")
-      .eq("trainer_id", trainerId)
-      .eq("status", "completed")
-      .gte("session_date", periodStart)
-      .lt("session_date", periodEnd);
+    const [{ data: sessions }, { count: activeClients }] = await Promise.all([
+      supabase
+        .from("pt_sessions")
+        .select("session_revenue")
+        .eq("trainer_id", trainerId)
+        .eq("status", "completed")
+        .gte("session_date", periodStart)
+        .lt("session_date", periodEnd),
+      supabase
+        .from("pt_assignments")
+        .select("id", { count: "exact", head: true })
+        .eq("trainer_id", trainerId)
+        .eq("status", "active"),
+    ]);
 
-    if (sessions && sessions.length > 0) {
-      const eligible_revenue = sessions.reduce((s: number, r: any) => s + (r.session_revenue ?? 0), 0);
+    const clientCount = activeClients ?? 0;
+    const eligible_revenue = (sessions ?? []).reduce((s: number, r: any) => s + (r.session_revenue ?? 0), 0);
+
+    // Only create a payout row if there's something to pay
+    if (clientCount > 0 || (type === "percentage" && eligible_revenue > 0)) {
       const calculated_payout =
         type === "percentage"
           ? (eligible_revenue * num) / 100
-          : sessions.length * num;
+          : clientCount * num; // fixed per client × number of active clients
 
       await supabase.from("trainer_payouts").insert({
         gym_id: gymId,
         trainer_id: trainerId,
         period_month: month,
         period_year: year,
-        completed_sessions: sessions.length,
+        completed_sessions: clientCount,       // stores client count for fixed; session count irrelevant
         eligible_revenue: Math.round(eligible_revenue * 100) / 100,
         commission_type: type,
         commission_value: num,

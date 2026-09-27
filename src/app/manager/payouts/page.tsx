@@ -85,7 +85,7 @@ export default async function PayoutsPage({
           <table className="w-full">
             <thead>
               <tr className="border-b border-[#1A1C18]">
-                {["Trainer", "Commission", "Sessions", "Revenue", "Calc. Payout", "Final Payout", "Status", ""].map(h => (
+                {["Trainer", "Commission", "Clients", "Revenue", "Calc. Payout", "Final Payout", "Status", ""].map(h => (
                   <th key={h} className="text-left px-5 py-3.5 text-[11px] font-medium text-[#6B6E67]">{h}</th>
                 ))}
               </tr>
@@ -104,7 +104,7 @@ export default async function PayoutsPage({
                     <td className="px-5 py-3.5 text-sm text-[#6B6E67]">
                       {payout.commission_type === "percentage"
                         ? `${payout.commission_value}%`
-                        : `₹${payout.commission_value}/session`}
+                        : `₹${payout.commission_value}/client`}
                     </td>
                     <td className="px-5 py-3.5 text-sm text-[#E8EBE4]">{payout.completed_sessions}</td>
                     <td className="px-5 py-3.5 text-sm text-[#E8EBE4]">{formatCurrency(payout.eligible_revenue)}</td>

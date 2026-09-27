@@ -409,7 +409,7 @@ export function TrainerForm({ trainer, gymId }: TrainerFormProps) {
           <div className="flex items-end gap-3">
             <div className="flex-1">
               <Input
-                label={formData.commission_type === "percentage" ? "Commission %" : "Amount per session (?)"}
+                label={formData.commission_type === "percentage" ? "Commission %" : "Amount per client (?)"}
                 type="number"
                 min="0"
                 step="0.01"
@@ -421,7 +421,7 @@ export function TrainerForm({ trainer, gymId }: TrainerFormProps) {
             <div className="h-9 px-4 rounded-lg bg-[#222520] border border-[#2E3129] flex items-center text-sm font-medium text-[#E8EBE4]">
               {formData.commission_type === "percentage"
                 ? `${formData.commission_value}%`
-                : `?${formData.commission_value}/session`}
+                : `?${formData.commission_value}/client`}
             </div>
           </div>
 
