@@ -6,8 +6,19 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar } from "@/components/ui/avatar";
 import { DAY_NAMES_FULL, formatTime } from "@/lib/utils";
-import { Search, X } from "lucide-react";
+import { Search, X, Clock } from "lucide-react";
 import type { Trainer, PtClient } from "@/types/database";
+
+const TIME_SLOTS = Array.from({ length: 34 }, (_, i) => {
+  const totalMins = 5 * 60 + i * 30; // 5:00 AM to 9:30 PM
+  const h = Math.floor(totalMins / 60);
+  const m = totalMins % 60;
+  const value = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+  const ampm = h < 12 ? "AM" : "PM";
+  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  const label = `${h12}:${String(m).padStart(2, "0")} ${ampm}`;
+  return { value, label };
+});
 
 function ClientSearchSelect({
   clients,
@@ -262,13 +273,22 @@ export function AssignmentForm({ trainers, clients, preselectedClientId }: Assig
           </div>
         </div>
 
-        <Input
-          label="Preferred Time *"
-          type="time"
-          value={formData.preferred_time}
-          onChange={e => setFormData(p => ({ ...p, preferred_time: e.target.value }))}
-          required
-        />
+        <div>
+          <label className="text-xs font-medium text-[#E8EBE4] mb-1.5 block">Preferred Time *</label>
+          <div className="relative">
+            <Clock size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B6E67] pointer-events-none" />
+            <select
+              value={formData.preferred_time}
+              onChange={e => setFormData(p => ({ ...p, preferred_time: e.target.value }))}
+              required
+              className="w-full pl-9 pr-3 py-2.5 text-sm bg-[#1A1C18] border border-[#2E3129] rounded-xl text-[#E8EBE4] focus:outline-none focus:border-[#B9E84A] appearance-none cursor-pointer"
+            >
+              {TIME_SLOTS.map(t => (
+                <option key={t.value} value={t.value}>{t.label}</option>
+              ))}
+            </select>
+          </div>
+        </div>
 
         {/* Trainer selection with capacity */}
         <div>
