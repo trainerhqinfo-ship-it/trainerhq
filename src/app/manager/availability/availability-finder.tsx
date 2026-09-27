@@ -100,11 +100,8 @@ export function AvailabilityFinder({ trainers, workingHours, assignments }: Prop
         return ah === selectedHour;
       }).length;
 
-      const free = Math.max(0, max - used);
-      if (free === 0) return { trainer, status: "full" as const, freeSlots: [], used, max };
-
-      // collect all free slots for the day (to show context)
-      const freeSlots: number[] = [];
+      // collect all slots for the day with their booking count
+      const daySlots: { hour: number; used: number }[] = [];
       for (let h = sh; h < eh; h++) {
         const u = assignments.filter(a => {
           if (a.trainer_id !== trainer.id) return false;
@@ -112,16 +109,18 @@ export function AvailabilityFinder({ trainers, workingHours, assignments }: Prop
           const [ah] = (a.preferred_time ?? "").split(":").map(Number);
           return ah === h;
         }).length;
-        if (max - u > 0) freeSlots.push(h);
+        daySlots.push({ hour: h, used: u });
       }
 
-      return { trainer, status: "available" as const, freeSlots, used, max, free };
+      // green = 0 clients booked; red = any clients booked
+      const status = used === 0 ? ("free" as const) : ("booked" as const);
+      return { trainer, status, daySlots, used, max };
     });
   }, [searched, selectedDay, selectedHour, trainers, workingHours, assignments]);
 
-  const available = results?.filter(r => r.status === "available") ?? [];
-  const full      = results?.filter(r => r.status === "full")      ?? [];
-  const off       = results?.filter(r => r.status === "off")       ?? [];
+  const free   = results?.filter(r => r.status === "free")   ?? [];
+  const booked = results?.filter(r => r.status === "booked") ?? [];
+  const off    = results?.filter(r => r.status === "off")    ?? [];
 
   const dayLabel  = DAY_OPTIONS.find(d => d.value === selectedDay)?.label ?? "";
   const timeLabel = TIME_OPTIONS.find(t => t.value === selectedHour)?.label ?? "";
@@ -183,13 +182,13 @@ export function AvailabilityFinder({ trainers, workingHours, assignments }: Prop
             <span className="text-[#3A3D35]">·</span>
             <span className="flex items-center gap-1.5 bg-[#B9E84A]/10 border border-[#B9E84A]/30 px-2.5 py-1 rounded-full">
               <CheckCircle size={10} className="text-[#B9E84A]" />
-              <span className="text-[#B9E84A] font-semibold">{available.length}</span>
+              <span className="text-[#B9E84A] font-semibold">{free.length}</span>
               <span className="text-[#B9E84A]/70">free</span>
             </span>
             <span className="flex items-center gap-1.5 bg-red-500/10 border border-red-500/25 px-2.5 py-1 rounded-full">
               <XCircle size={10} className="text-red-400" />
-              <span className="text-red-400 font-semibold">{full.length}</span>
-              <span className="text-red-400/70">full</span>
+              <span className="text-red-400 font-semibold">{booked.length}</span>
+              <span className="text-red-400/70">booked</span>
             </span>
             <span className="flex items-center gap-1.5 bg-[#1A1C18] border border-[#2E3129] px-2.5 py-1 rounded-full">
               <span className="text-[#6B6E67] font-semibold">{off.length}</span>
@@ -197,23 +196,22 @@ export function AvailabilityFinder({ trainers, workingHours, assignments }: Prop
             </span>
           </div>
 
-          {/* Available */}
-          {available.length > 0 ? (
+          {/* Free trainers */}
+          {free.length > 0 ? (
             <div className="bg-[#222520] border border-[#B9E84A]/25 rounded-2xl overflow-hidden">
               <div className="px-5 py-3 border-b border-[#B9E84A]/15 flex items-center gap-2">
                 <CheckCircle size={13} className="text-[#B9E84A]" />
-                <span className="text-sm font-semibold text-[#E8EBE4]">Available</span>
+                <span className="text-sm font-semibold text-[#E8EBE4]">Free</span>
+                <span className="text-xs text-[#9B9E96]">— no clients booked at this time</span>
               </div>
               <div className="divide-y divide-[#1A1C18]">
-                {available.map((r: any) => (
+                {free.map((r: any) => (
                   <div key={r.trainer.id} className="px-5 py-4 hover:bg-[#1E2020]/50 transition-colors">
                     <div className="flex items-center gap-3 mb-3">
                       <Avatar firstName={r.trainer.first_name} lastName={r.trainer.last_name} src={r.trainer.profile_picture_url} size="sm" />
                       <div className="flex-1 min-w-0">
                         <div className="text-sm font-semibold text-[#E8EBE4]">{r.trainer.first_name} {r.trainer.last_name}</div>
-                        <div className="text-[11px] text-[#9B9E96] mt-0.5">
-                          {r.used}/{r.max} booked · <span className="text-[#B9E84A]">{r.free} slot{r.free !== 1 ? "s" : ""} free</span>
-                        </div>
+                        <div className="text-[11px] text-[#B9E84A] mt-0.5">0/{r.max} clients — completely free</div>
                       </div>
                       <Link
                         href={`/manager/trainers/${r.trainer.id}`}
@@ -222,18 +220,21 @@ export function AvailabilityFinder({ trainers, workingHours, assignments }: Prop
                         View <ChevronRight size={11} />
                       </Link>
                     </div>
-                    {/* All free slots for the day */}
+                    {/* Other slots for the day */}
                     <div className="flex flex-wrap gap-1.5">
-                      {r.freeSlots.map((h: number) => (
+                      {r.daySlots.map((s: any) => (
                         <span
-                          key={h}
-                          className={`inline-flex items-center text-[11px] font-medium px-2.5 py-1 rounded-lg ${
-                            h === selectedHour
+                          key={s.hour}
+                          className={`inline-flex items-center gap-1 text-[11px] font-medium px-2.5 py-1 rounded-lg ${
+                            s.hour === selectedHour
                               ? "bg-[#B9E84A] text-[#171917]"
-                              : "bg-[#B9E84A]/12 border border-[#B9E84A]/30 text-[#B9E84A]"
+                              : s.used === 0
+                              ? "bg-[#B9E84A]/12 border border-[#B9E84A]/30 text-[#B9E84A]"
+                              : "bg-red-500/10 border border-red-500/25 text-red-400"
                           }`}
                         >
-                          {slotLabel(h)}
+                          {slotLabel(s.hour)}
+                          {s.used > 0 && <span className="text-[9px] opacity-70">{s.used}/{r.max}</span>}
                         </span>
                       ))}
                     </div>
@@ -244,24 +245,36 @@ export function AvailabilityFinder({ trainers, workingHours, assignments }: Prop
           ) : (
             <div className="bg-[#222520] border border-[#2E3129] rounded-2xl px-5 py-8 text-center">
               <div className="text-2xl mb-2">😔</div>
-              <div className="text-sm font-semibold text-[#E8EBE4] mb-1">No trainers available at {timeLabel}</div>
+              <div className="text-sm font-semibold text-[#E8EBE4] mb-1">No free trainers at {timeLabel}</div>
               <div className="text-xs text-[#6B6E67]">Try a different time or day</div>
             </div>
           )}
 
-          {/* Full */}
-          {full.length > 0 && (
-            <div className="bg-[#222520] border border-[#2E3129] rounded-2xl overflow-hidden">
-              <div className="px-5 py-3 border-b border-[#1A1C18] flex items-center gap-2">
+          {/* Booked trainers */}
+          {booked.length > 0 && (
+            <div className="bg-[#222520] border border-red-500/20 rounded-2xl overflow-hidden">
+              <div className="px-5 py-3 border-b border-red-500/10 flex items-center gap-2">
                 <Users size={13} className="text-red-400" />
-                <span className="text-sm font-semibold text-[#E8EBE4]">Fully Booked at this time</span>
+                <span className="text-sm font-semibold text-[#E8EBE4]">Booked</span>
+                <span className="text-xs text-[#9B9E96]">— already has clients at this time</span>
               </div>
-              <div className="px-5 py-3 flex flex-wrap gap-2">
-                {full.map((r: any) => (
-                  <div key={r.trainer.id} className="flex items-center gap-2 bg-[#1A1C18] border border-[#2E3129] px-3 py-2 rounded-xl">
-                    <Avatar firstName={r.trainer.first_name} lastName={r.trainer.last_name} size="xs" />
-                    <span className="text-xs text-[#9B9E96]">{r.trainer.first_name} {r.trainer.last_name}</span>
-                    <span className="text-[9px] text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded font-medium">FULL</span>
+              <div className="divide-y divide-[#1A1C18]">
+                {booked.map((r: any) => (
+                  <div key={r.trainer.id} className="px-5 py-4 opacity-70">
+                    <div className="flex items-center gap-3 mb-2">
+                      <Avatar firstName={r.trainer.first_name} lastName={r.trainer.last_name} src={r.trainer.profile_picture_url} size="sm" />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium text-[#E8EBE4]">{r.trainer.first_name} {r.trainer.last_name}</div>
+                        <div className="text-[11px] text-red-400 mt-0.5">{r.used}/{r.max} clients booked</div>
+                      </div>
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium flex-shrink-0 ${
+                        r.used >= r.max
+                          ? "text-red-400 bg-red-500/10 border border-red-500/20"
+                          : "text-orange-400 bg-orange-500/10 border border-orange-500/20"
+                      }`}>
+                        {r.used >= r.max ? "FULL" : `${r.used}/${r.max}`}
+                      </span>
+                    </div>
                   </div>
                 ))}
               </div>
