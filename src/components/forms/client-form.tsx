@@ -50,7 +50,7 @@ export function ClientForm({ client }: ClientFormProps) {
     setError("");
 
     const supabase = createClient();
-    const user = await getSessionUser();
+    const { data: { user } } = await supabase.auth.getUser();
     const { data: profile } = await supabase.from("profiles").select("gym_id").eq("id", user!.id).single();
     const gymId = profile?.gym_id!;
 

@@ -44,7 +44,7 @@ export function SessionActions({ sessionId, currentNotes, trainerId, onDone }: S
 
     const { error: updateErr } = await supabase
       .from("pt_sessions")
-      .update(updateData)
+      .update(updateData as any)
       .eq("id", sessionId)
       .eq("trainer_id", trainerId)
       .eq("status", "scheduled"); // extra guard: only update if still scheduled

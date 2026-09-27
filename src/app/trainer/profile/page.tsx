@@ -15,7 +15,7 @@ export default async function TrainerProfilePage() {
   const { data: trainer } = await supabase.from("trainers")
     .select("*, trainer_working_hours(*), trainer_commission_rules(*)")
     .eq("user_id", user.id)
-    .single();
+    .single() as any;
 
   if (!trainer) {
     return (

@@ -69,7 +69,7 @@ export function TrainerForm({ trainer, gymId }: TrainerFormProps) {
     setError("");
 
     const supabase = createClient();
-    const user = await getSessionUser();
+    const { data: { user } } = await supabase.auth.getUser();
     const { data: profile } = await supabase.from("profiles").select("gym_id").eq("id", user!.id).single();
     const gId = gymId ?? profile?.gym_id;
 

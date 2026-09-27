@@ -16,7 +16,7 @@ export default async function ManagerClientsPage() {
   const [{ data: clientsRaw }, { data: assignmentsRaw }] = await Promise.all([
     supabase
       .from("pt_clients")
-      .select("id, first_name, last_name, email, phone, status, start_date, goal")
+      .select("id, first_name, last_name, email, phone, status, goal")
       .eq("gym_id", gymId)
       .order("first_name"),
     supabase

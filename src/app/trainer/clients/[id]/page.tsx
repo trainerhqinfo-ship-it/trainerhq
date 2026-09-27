@@ -28,7 +28,7 @@ export default async function TrainerClientDetailPage({ params }: { params: Prom
     .eq("trainer_id", trainer.id)
     .eq("client_id", id)
     .eq("status", "active")
-    .single();
+    .single() as any;
 
   if (!assignmentRaw) notFound();
 
