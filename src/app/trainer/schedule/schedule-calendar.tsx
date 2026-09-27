@@ -110,9 +110,10 @@ export function ScheduleCalendar({ sessions, weekStart, workingHours, todayIST }
     return `${s.toLocaleDateString("en-IN", { day: "numeric", month: "short" })} – ${e.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}`;
   })();
 
-  const completed = sessions.filter((s) => s.status === "completed").length;
-  const upcoming  = sessions.filter((s) => s.status === "scheduled").length;
-  const cancelled = sessions.filter((s) => s.status === "cancelled" || s.status === "no_show").length;
+  const completed = sessions.filter((s: any) => s.status === "completed" && !s.isVirtual).length;
+  const upcoming  = sessions.filter((s: any) => s.status === "scheduled").length;
+  const cancelled = sessions.filter((s: any) => (s.status === "cancelled" || s.status === "no_show") && !s.isVirtual).length;
+  const planned   = sessions.filter((s: any) => s.isVirtual).length;
 
   return (
     <div className="space-y-4">
@@ -149,6 +150,12 @@ export function ScheduleCalendar({ sessions, weekStart, workingHours, todayIST }
             <span className="text-sky-400 font-semibold">{upcoming}</span>
             <span className="text-sky-400/70">upcoming</span>
           </span>
+          {planned > 0 && (
+            <span className="flex items-center gap-1.5 bg-[#2E3129] border border-[#3A3D35] px-2.5 py-1 rounded-full">
+              <span className="text-[#9B9E96] font-semibold">{planned}</span>
+              <span className="text-[#6B6E67]">planned</span>
+            </span>
+          )}
           {cancelled > 0 && (
             <span className="flex items-center gap-1.5 bg-red-400/10 border border-red-400/30 px-2.5 py-1 rounded-full">
               <CalendarX2 size={11} className="text-red-400" />
@@ -237,23 +244,30 @@ export function ScheduleCalendar({ sessions, weekStart, workingHours, todayIST }
               )}
 
               {/* Session blocks */}
-              {day.sessions.map((session) => {
+              {day.sessions.map((session: any) => {
                 const { top, height } = sessionPos(session.start_time, session.end_time);
                 const st = STATUS_STYLE[session.status] ?? STATUS_STYLE.scheduled;
                 const client = session.pt_clients;
                 const isSelected = selected?.id === session.id;
+                const isVirtual = !!session.isVirtual;
                 return (
                   <button
                     key={session.id}
                     onClick={() => setSelected(isSelected ? null : session)}
-                    className={`absolute left-1 right-1 rounded-lg border-l-[3px] px-2 pt-1 pb-0.5 text-left transition-all cursor-pointer z-10 ${st.card} ${isSelected ? "ring-1 ring-white/30 brightness-125" : ""}`}
-                    style={{ top: top + 2, height: Math.max(height - 4, 26) }}
+                    className={`absolute left-1 right-1 rounded-lg border-l-[3px] px-2 pt-1 pb-0.5 text-left transition-all cursor-pointer z-10 ${st.card} ${isSelected ? "ring-1 ring-white/30 brightness-125" : ""} ${isVirtual ? "opacity-70" : ""}`}
+                    style={{
+                      top: top + 2,
+                      height: Math.max(height - 4, 26),
+                      borderStyle: isVirtual ? "dashed" : undefined,
+                    }}
                   >
                     <div className="text-[11px] font-semibold leading-tight truncate text-[#E8EBE4]">
                       {client?.first_name} {client?.last_name}
                     </div>
                     {height >= 40 && (
-                      <div className="text-[9px] text-[#9B9E96] mt-0.5">{formatTime(session.start_time)}</div>
+                      <div className="text-[9px] text-[#9B9E96] mt-0.5">
+                        {formatTime(session.start_time)}{isVirtual ? " · planned" : ""}
+                      </div>
                     )}
                   </button>
                 );
@@ -265,17 +279,18 @@ export function ScheduleCalendar({ sessions, weekStart, workingHours, todayIST }
 
       {/* ── Session detail ── */}
       {selected && (() => {
-        const st = STATUS_STYLE[selected.status] ?? STATUS_STYLE.scheduled;
-        const client = selected.pt_clients;
+        const sel = selected as any;
+        const st = STATUS_STYLE[sel.status] ?? STATUS_STYLE.scheduled;
+        const client = sel.pt_clients;
         return (
           <div className={`rounded-2xl border border-[#2E3129] bg-[#222520] p-5 animate-in fade-in slide-in-from-bottom-2 duration-200`}>
             <div className="flex items-start justify-between mb-4">
               <div className="flex items-center gap-2">
                 <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${st.dot}`} />
                 <span className="text-sm font-semibold text-[#E8EBE4]">Session Details</span>
-                <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${st.card} border-l-0 !bg-opacity-100`}
-                  style={{ border: "1px solid currentColor", opacity: 1 }}>
-                  {st.label}
+                <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${st.card} border-l-0`}
+                  style={{ border: "1px solid currentColor", borderStyle: sel.isVirtual ? "dashed" : "solid" }}>
+                  {sel.isVirtual ? "Planned" : st.label}
                 </span>
               </div>
               <button onClick={() => setSelected(null)} className="text-[#6B6E67] hover:text-[#E8EBE4] transition-colors">
@@ -289,18 +304,24 @@ export function ScheduleCalendar({ sessions, weekStart, workingHours, todayIST }
               </div>
               <div>
                 <div className="flex items-center gap-1 text-[10px] text-[#9B9E96] mb-1"><Clock size={10} /> Time</div>
-                <div className="text-sm font-semibold text-[#E8EBE4]">{formatTime(selected.start_time)}</div>
+                <div className="text-sm font-semibold text-[#E8EBE4]">{formatTime(sel.start_time)}</div>
               </div>
               <div>
                 <div className="text-[10px] text-[#9B9E96] mb-1">Date</div>
                 <div className="text-sm font-semibold text-[#E8EBE4]">
-                  {new Date(selected.session_date + "T00:00:00").toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" })}
+                  {new Date(sel.session_date + "T00:00:00").toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" })}
                 </div>
               </div>
-              {selected.session_revenue != null && (
+              {sel.session_revenue != null && !sel.isVirtual && (
                 <div>
                   <div className="flex items-center gap-1 text-[10px] text-[#9B9E96] mb-1"><TrendingUp size={10} /> Revenue</div>
-                  <div className="text-sm font-semibold text-[#E8EBE4]">₹{Number(selected.session_revenue).toLocaleString("en-IN")}</div>
+                  <div className="text-sm font-semibold text-[#E8EBE4]">₹{Number(sel.session_revenue).toLocaleString("en-IN")}</div>
+                </div>
+              )}
+              {sel.isVirtual && (
+                <div>
+                  <div className="text-[10px] text-[#9B9E96] mb-1">Source</div>
+                  <div className="text-xs text-[#9B9E96]">From active assignment</div>
                 </div>
               )}
             </div>
@@ -316,6 +337,10 @@ export function ScheduleCalendar({ sessions, weekStart, workingHours, todayIST }
             {val.label}
           </div>
         ))}
+        <div className="flex items-center gap-1.5">
+          <div className="w-3 h-2 rounded border border-dashed border-sky-400 opacity-60" />
+          Planned (from assignment)
+        </div>
         <div className="flex items-center gap-1.5 ml-2">
           <div className="w-2 h-2 rounded-full bg-red-400 shadow-[0_0_4px_rgba(248,113,113,0.7)]" />
           Current time
