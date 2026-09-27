@@ -7,6 +7,7 @@ import { formatCurrency, formatDate, formatTime, DAY_NAMES_FULL } from "@/lib/ut
 import { Star, Calendar, Users, TrendingUp, Award, Edit, ShieldCheck, ShieldOff } from "lucide-react";
 import Link from "next/link";
 import { ResetPasswordButton } from "./reset-password-button";
+import { CommissionEditor } from "./commission-editor";
 
 export default async function TrainerDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -29,7 +30,7 @@ export default async function TrainerDetailPage({ params }: { params: Promise<{ 
     { data: payout },
   ] = await Promise.all([
     supabase.from("trainers").select("*").eq("id", id).eq("gym_id", gymId).single(),
-    supabase.from("trainer_commission_rules").select("*").eq("trainer_id", id).is("effective_to", null).single(),
+    supabase.from("trainer_commission_rules").select("*").eq("trainer_id", id).is("effective_to", null).limit(1).maybeSingle(),
     supabase.from("trainer_working_hours").select("*").eq("trainer_id", id).order("day_of_week"),
     supabase.from("pt_assignments").select("*, pt_clients(*)").eq("trainer_id", id).eq("status", "active"),
     supabase.from("pt_sessions").select("*").eq("trainer_id", id).order("session_date", { ascending: false }).limit(20),
@@ -40,7 +41,7 @@ export default async function TrainerDetailPage({ params }: { params: Promise<{ 
       .eq("trainer_id", id)
       .eq("period_month", new Date().getMonth() + 1)
       .eq("period_year", new Date().getFullYear())
-      .single(),
+      .maybeSingle(),
   ]);
 
   if (!trainer) notFound();
@@ -122,16 +123,13 @@ export default async function TrainerDetailPage({ params }: { params: Promise<{ 
                   <div className="text-xs text-[#9B9E96]">Max Clients/Slot</div>
                   <div className="font-bold text-[#E8EBE4] mt-0.5 text-base">{trainer.max_clients_per_slot}</div>
                 </div>
-                <div>
-                  <div className="text-xs text-[#9B9E96]">Commission</div>
-                  <div className="font-medium text-[#E8EBE4] mt-0.5">
-                    {commission
-                      ? commission.commission_type === "percentage"
-                        ? `${commission.commission_value}%`
-                        : `₹${commission.commission_value}/session`
-                      : "—"}
-                  </div>
-                </div>
+                <CommissionEditor
+                  trainerId={id}
+                  gymId={gymId}
+                  commissionType={(commission as any)?.commission_type ?? null}
+                  commissionValue={(commission as any)?.commission_value ?? null}
+                  commissionRuleId={(commission as any)?.id ?? null}
+                />
               </div>
               {trainer.certifications?.length > 0 && (
                 <div className="mt-3 flex flex-wrap gap-1.5">
