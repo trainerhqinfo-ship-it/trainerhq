@@ -1,12 +1,121 @@
 "use client";
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
-import { Input, Select } from "@/components/ui/input";
+import { Input } from "@/components/ui/input";
 import { Avatar } from "@/components/ui/avatar";
 import { DAY_NAMES_FULL, formatTime } from "@/lib/utils";
+import { Search, X } from "lucide-react";
 import type { Trainer, PtClient } from "@/types/database";
+
+function ClientSearchSelect({
+  clients,
+  value,
+  onChange,
+}: {
+  clients: PtClient[];
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const selected = clients.find(c => c.id === value);
+
+  const filtered = query.trim()
+    ? clients.filter(c => {
+        const q = query.toLowerCase();
+        return (
+          `${c.first_name} ${c.last_name}`.toLowerCase().includes(q) ||
+          (c.phone ?? "").toLowerCase().includes(q)
+        );
+      })
+    : clients;
+
+  // close on outside click
+  useEffect(() => {
+    function onDown(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, []);
+
+  function select(client: PtClient) {
+    onChange(client.id);
+    setQuery("");
+    setOpen(false);
+  }
+
+  function clear() {
+    onChange("");
+    setQuery("");
+    setOpen(false);
+  }
+
+  return (
+    <div ref={containerRef} className="relative">
+      <label className="text-xs font-medium text-[#E8EBE4] mb-1.5 block">Client *</label>
+
+      {/* Selected pill or search input */}
+      {selected && !open ? (
+        <div className="flex items-center gap-2 px-3 py-2.5 bg-[#1A1C18] border border-[#B9E84A]/50 rounded-xl">
+          <Avatar firstName={selected.first_name} lastName={selected.last_name} src={selected.profile_picture_url} size="xs" />
+          <div className="flex-1 min-w-0">
+            <div className="text-sm text-[#E8EBE4] font-medium truncate">{selected.first_name} {selected.last_name}</div>
+            {selected.phone && <div className="text-[10px] text-[#6B6E67]">{selected.phone}</div>}
+          </div>
+          <button type="button" onClick={clear} className="text-[#6B6E67] hover:text-[#E8EBE4] transition-colors flex-shrink-0">
+            <X size={13} />
+          </button>
+        </div>
+      ) : (
+        <div className="relative">
+          <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B6E67] pointer-events-none" />
+          <input
+            type="text"
+            value={query}
+            placeholder="Search by name or phone…"
+            autoComplete="off"
+            onFocus={() => setOpen(true)}
+            onChange={e => { setQuery(e.target.value); setOpen(true); }}
+            className="w-full pl-8 pr-3 py-2.5 text-sm bg-[#1A1C18] border border-[#2E3129] rounded-xl text-[#E8EBE4] placeholder-[#4A4D47] focus:outline-none focus:border-[#B9E84A]"
+          />
+        </div>
+      )}
+
+      {/* Dropdown */}
+      {open && (
+        <div className="absolute z-50 top-full mt-1.5 w-full bg-[#1E2020] border border-[#2E3129] rounded-xl shadow-xl overflow-hidden">
+          <div className="max-h-56 overflow-y-auto divide-y divide-[#2E3129]">
+            {filtered.length === 0 ? (
+              <div className="px-4 py-3 text-xs text-[#6B6E67]">No clients match "{query}"</div>
+            ) : (
+              filtered.map(c => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onMouseDown={() => select(c)}
+                  className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-[#2E3129] transition-colors text-left"
+                >
+                  <Avatar firstName={c.first_name} lastName={c.last_name} src={c.profile_picture_url} size="xs" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm text-[#E8EBE4] font-medium truncate">{c.first_name} {c.last_name}</div>
+                    {c.phone && <div className="text-[10px] text-[#6B6E67]">{c.phone}</div>}
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 interface AssignmentFormProps {
   trainers: (Trainer & { pt_assignments?: any[]; trainer_working_hours?: any[] })[];
@@ -127,15 +236,10 @@ export function AssignmentForm({ trainers, clients, preselectedClientId }: Assig
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
       <div className="bg-[#222520] border border-[#2E3129] rounded-2xl p-6 space-y-5">
-        <Select
-          label="Client *"
+        <ClientSearchSelect
+          clients={clients}
           value={formData.client_id}
-          onChange={e => setFormData(p => ({ ...p, client_id: e.target.value }))}
-          required
-          options={[
-            { value: "", label: "Select client..." },
-            ...clients.map(c => ({ value: c.id, label: `${c.first_name} ${c.last_name}` })),
-          ]}
+          onChange={id => setFormData(p => ({ ...p, client_id: id }))}
         />
 
         <div>
