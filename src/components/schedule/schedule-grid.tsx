@@ -1,8 +1,9 @@
 "use client";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Avatar } from "@/components/ui/avatar";
 import { formatTime } from "@/lib/utils";
-import { ChevronLeft, ChevronRight, CalendarCheck } from "lucide-react";
+import { ChevronLeft, ChevronRight, CalendarCheck, Users, TrendingUp } from "lucide-react";
 
 interface SlotData {
   time: string;
@@ -32,65 +33,51 @@ interface ScheduleGridProps {
   gridData: TrainerRow[];
 }
 
-function SlotCell({ slot, isOnLeave }: { slot: SlotData; isOnLeave: boolean }) {
+function CapacityCell({ slot, isOnLeave }: { slot: SlotData; isOnLeave: boolean }) {
   if (!slot.isWorking) {
-    return (
-      <div className="h-16 rounded-lg bg-[#1A1C18] border border-dashed border-[#2E3129] flex items-center justify-center">
-        <span className="text-[10px] text-[#6B6E67]">—</span>
-      </div>
-    );
+    return <div className="h-14 rounded-lg bg-[#1A1C18]/60 flex items-center justify-center"><span className="text-[#3A3D35] text-base">·</span></div>;
   }
-
   if (isOnLeave) {
     return (
-      <div className="h-16 rounded-lg bg-yellow-500/10 border border-yellow-500/30 flex flex-col items-center justify-center gap-0.5">
-        <span className="text-[10px] font-semibold text-yellow-400">LEAVE</span>
+      <div className="h-14 rounded-lg bg-yellow-500/10 border border-yellow-500/20 flex flex-col items-center justify-center gap-0.5">
+        <span className="text-[9px] font-semibold text-yellow-500 tracking-wide">LEAVE</span>
       </div>
     );
   }
-
   if (slot.isBlocked) {
     return (
-      <div className="h-16 rounded-lg bg-[#2E3129] border border-[#3A3D35] flex items-center justify-center">
-        <span className="text-[10px] font-medium text-[#6B6E67]">BLOCKED</span>
+      <div className="h-14 rounded-lg bg-[#2E3129] border border-[#3A3D35] flex items-center justify-center">
+        <span className="text-[9px] font-medium text-[#6B6E67] tracking-wide">BLOCKED</span>
       </div>
     );
   }
 
-  const isFull = slot.current >= slot.max;
   const ratio = slot.max > 0 ? slot.current / slot.max : 0;
+  const isFull = slot.current >= slot.max;
+  const isEmpty = slot.current === 0;
 
-  let bg = "bg-[#B9E84A]/12 border-[#B9E84A]/35";
-  let textColor = "text-[#3D6005]";
-  let capacityText = `${slot.current}/${slot.max}`;
-
-  if (isFull) {
-    bg = "bg-red-500/10 border-red-500/30";
-    textColor = "text-red-400";
-  } else if (ratio >= 0.5) {
-    bg = "bg-orange-500/10 border-orange-500/30";
-    textColor = "text-orange-400";
-  }
+  const { bg, numColor } = isFull
+    ? { bg: "bg-red-500/10 border border-red-500/20", numColor: "text-red-400" }
+    : ratio >= 0.5
+    ? { bg: "bg-amber-500/10 border border-amber-500/20", numColor: "text-amber-400" }
+    : { bg: "bg-[#B9E84A]/8 border border-[#B9E84A]/20", numColor: "text-[#B9E84A]" };
 
   return (
-    <div className={`h-16 rounded-lg border ${bg} flex flex-col items-center justify-center gap-1 px-2 cursor-pointer hover:opacity-80 transition-opacity`}>
-      <span className={`text-base font-bold tabular-nums ${textColor}`}>
-        {capacityText}
+    <div className={`h-14 rounded-lg flex flex-col items-center justify-center gap-0.5 cursor-default transition-all hover:brightness-110 ${bg}`}>
+      <span className={`text-xl font-bold tabular-nums leading-none ${numColor}`}>
+        {slot.current}
+        <span className="text-sm opacity-50">/{slot.max}</span>
       </span>
       {slot.clients.length > 0 && (
-        <div className="flex flex-wrap gap-0.5 justify-center max-w-full">
+        <div className="flex flex-wrap gap-px justify-center max-w-[80px]">
           {slot.clients.slice(0, 3).map((name, i) => (
-            <span key={i} className="text-[9px] text-[#6B6E67] bg-[#222520]/60 rounded px-1 truncate max-w-[48px]">
-              {name}
-            </span>
+            <span key={i} className="text-[8px] text-[#6B6E67] bg-[#1A1C18] rounded px-1 truncate max-w-[36px]">{name}</span>
           ))}
-          {slot.clients.length > 3 && (
-            <span className="text-[9px] text-[#6B6E67]">+{slot.clients.length - 3}</span>
-          )}
+          {slot.clients.length > 3 && <span className="text-[8px] text-[#6B6E67]">+{slot.clients.length - 3}</span>}
         </div>
       )}
-      {slot.current === 0 && slot.max > 0 && (
-        <span className="text-[9px] text-[#6B6E67]">{slot.max} available</span>
+      {isEmpty && (
+        <span className="text-[8px] text-[#4A4D47]">free</span>
       )}
     </div>
   );
@@ -98,6 +85,7 @@ function SlotCell({ slot, isOnLeave }: { slot: SlotData; isOnLeave: boolean }) {
 
 export function ScheduleGrid({ date, slots, gridData }: ScheduleGridProps) {
   const router = useRouter();
+  const [highlight, setHighlight] = useState<string | null>(null);
 
   function changeDate(delta: number) {
     const d = new Date(date + "T00:00:00");
@@ -106,170 +94,154 @@ export function ScheduleGrid({ date, slots, gridData }: ScheduleGridProps) {
   }
 
   const displayDate = new Date(date + "T00:00:00").toLocaleDateString("en-IN", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-    year: "numeric",
+    weekday: "long", day: "numeric", month: "long", year: "numeric",
   });
 
-  // Show only slots between 6am-10pm for cleanliness
-  const filteredSlots = slots.filter(s => {
+  const filteredSlots = slots.filter((s) => {
     const h = parseInt(s.split(":")[0]);
     return h >= 5 && h <= 22;
   });
 
+  const totalSessions = gridData.reduce((sum, { slots: ts }) =>
+    sum + ts.filter((s) => s.isWorking && s.current > 0).length, 0);
+
+  const fullSlots = gridData.reduce((sum, { slots: ts, isOnLeave }) =>
+    sum + ts.filter((s) => s.isWorking && !isOnLeave && s.current >= s.max && s.max > 0).length, 0);
+
   return (
     <div className="space-y-4">
-      {/* Date navigator */}
-      <div className="flex items-center justify-between bg-[#222520] border border-[#2E3129] rounded-xl px-4 py-3">
-        <button
-          onClick={() => changeDate(-1)}
-          className="w-8 h-8 rounded-lg border border-[#2E3129] flex items-center justify-center hover:bg-[#1A1C18] transition-colors text-[#E8EBE4]"
-        >
-          <ChevronLeft size={15} />
-        </button>
-        <div className="flex items-center gap-3">
-          <span className="text-sm font-medium text-[#E8EBE4]">{displayDate}</span>
-          <button
-            onClick={() => router.push("/manager/schedule")}
-            className="flex items-center gap-1 text-xs border border-[#2E3129] text-[#9B9E96] px-2.5 py-1 rounded-lg hover:bg-[#1A1C18] transition-colors"
-          >
+
+      {/* ── Header bar ── */}
+      <div className="flex flex-wrap items-center justify-between gap-3 bg-[#222520] border border-[#2E3129] rounded-2xl px-5 py-3.5">
+        <div className="flex items-center gap-2">
+          <button onClick={() => changeDate(-1)} className="w-8 h-8 rounded-lg border border-[#2E3129] flex items-center justify-center hover:bg-[#1A1C18] transition-colors text-[#E8EBE4]">
+            <ChevronLeft size={15} />
+          </button>
+          <button onClick={() => router.push("/manager/schedule")} className="text-xs border border-[#2E3129] text-[#9B9E96] px-3 h-8 rounded-lg hover:bg-[#1A1C18] transition-colors flex items-center gap-1.5">
             <CalendarCheck size={11} /> Today
           </button>
+          <button onClick={() => changeDate(1)} className="w-8 h-8 rounded-lg border border-[#2E3129] flex items-center justify-center hover:bg-[#1A1C18] transition-colors text-[#E8EBE4]">
+            <ChevronRight size={15} />
+          </button>
+          <span className="text-sm font-semibold text-[#E8EBE4] ml-1">{displayDate}</span>
         </div>
-        <button
-          onClick={() => changeDate(1)}
-          className="w-8 h-8 rounded-lg border border-[#2E3129] flex items-center justify-center hover:bg-[#1A1C18] transition-colors text-[#E8EBE4]"
-        >
-          <ChevronRight size={15} />
-        </button>
-      </div>
 
-      {/* Legend */}
-      <div className="flex items-center gap-4 text-xs text-[#6B6E67]">
-        <div className="flex items-center gap-1.5">
-          <div className="w-3 h-3 rounded bg-[#B9E84A]/30 border border-[#B9E84A]/50" />
-          Available
-        </div>
-        <div className="flex items-center gap-1.5">
-          <div className="w-3 h-3 rounded bg-orange-500/20 border border-orange-500/40" />
-          Partially Full
-        </div>
-        <div className="flex items-center gap-1.5">
-          <div className="w-3 h-3 rounded bg-red-500/20 border border-red-500/40" />
-          Full
-        </div>
-        <div className="flex items-center gap-1.5">
-          <div className="w-3 h-3 rounded bg-yellow-500/20 border border-yellow-500/40" />
-          On Leave
-        </div>
-        <div className="flex items-center gap-1.5">
-          <div className="w-3 h-3 rounded bg-[#2E3129] border border-[#3A3D35] border-dashed" />
-          Not Working
+        <div className="flex items-center gap-2 text-xs">
+          <span className="flex items-center gap-1.5 bg-[#1A1C18] border border-[#2E3129] px-2.5 py-1 rounded-full">
+            <Users size={10} className="text-[#9B9E96]" />
+            <span className="text-[#E8EBE4] font-semibold">{gridData.length}</span>
+            <span className="text-[#9B9E96]">trainers</span>
+          </span>
+          <span className="flex items-center gap-1.5 bg-[#B9E84A]/8 border border-[#B9E84A]/25 px-2.5 py-1 rounded-full">
+            <TrendingUp size={10} className="text-[#B9E84A]" />
+            <span className="text-[#B9E84A] font-semibold">{totalSessions}</span>
+            <span className="text-[#B9E84A]/70">booked slots</span>
+          </span>
+          {fullSlots > 0 && (
+            <span className="flex items-center gap-1.5 bg-red-500/8 border border-red-500/25 px-2.5 py-1 rounded-full">
+              <span className="text-red-400 font-semibold">{fullSlots}</span>
+              <span className="text-red-400/70">full</span>
+            </span>
+          )}
         </div>
       </div>
 
-      {/* Grid */}
+      {/* ── Legend ── */}
+      <div className="flex items-center gap-4 text-[10px] text-[#6B6E67]">
+        {[
+          { bg: "bg-[#B9E84A]/25 border border-[#B9E84A]/40", label: "Available" },
+          { bg: "bg-amber-500/25 border border-amber-500/40", label: "Partially full" },
+          { bg: "bg-red-500/25 border border-red-500/40",     label: "Full" },
+          { bg: "bg-yellow-500/25 border border-yellow-500/40",label: "On leave" },
+          { bg: "bg-[#1A1C18] border border-dashed border-[#3A3D35]", label: "Not working" },
+        ].map(({ bg, label }) => (
+          <div key={label} className="flex items-center gap-1.5">
+            <div className={`w-3 h-3 rounded ${bg}`} />
+            {label}
+          </div>
+        ))}
+      </div>
+
+      {/* ── Grid ── */}
       <div className="bg-[#222520] border border-[#2E3129] rounded-2xl overflow-hidden">
-        <div className="overflow-x-auto scrollbar-thin">
-          <table className="w-full" style={{ minWidth: Math.max(600, filteredSlots.length * 90 + 180) }}>
+        <div className="overflow-x-auto">
+          <table className="w-full" style={{ minWidth: Math.max(640, filteredSlots.length * 96 + 200) }}>
             <thead>
-              <tr className="border-b border-[#1A1C18]">
-                <th className="sticky left-0 bg-[#222520] text-left px-5 py-3.5 text-[11px] font-semibold text-[#6B6E67] w-44 z-10">
-                  TRAINER
+              <tr className="bg-[#1E2020] border-b border-[#2E3129]">
+                <th className="sticky left-0 bg-[#1E2020] text-left px-5 py-3.5 text-[11px] font-semibold text-[#6B6E67] tracking-wider w-48 z-10 uppercase">
+                  Trainer
                 </th>
-                {filteredSlots.map(slot => (
+                {filteredSlots.map((slot) => (
                   <th
                     key={slot}
-                    className="text-center px-2 py-3.5 text-[11px] font-semibold text-[#6B6E67] min-w-[84px]"
+                    onMouseEnter={() => setHighlight(slot)}
+                    onMouseLeave={() => setHighlight(null)}
+                    className={`text-center px-2 py-3.5 text-[11px] font-semibold transition-colors min-w-[92px] cursor-default ${
+                      highlight === slot ? "text-[#B9E84A] bg-[#B9E84A]/5" : "text-[#6B6E67]"
+                    }`}
                   >
                     {formatTime(slot)}
                   </th>
                 ))}
               </tr>
             </thead>
-            <tbody>
-              {gridData.map(({ trainer, isOnLeave, slots: trainerSlots }) => (
-                <tr key={trainer.id} className="border-b border-[#1A1C18] last:border-0">
-                  <td className="sticky left-0 bg-[#222520] px-5 py-2.5 z-10">
-                    <div className="flex items-center gap-2.5">
-                      <Avatar
-                        firstName={trainer.first_name}
-                        lastName={trainer.last_name}
-                        src={trainer.profile_picture_url}
-                        size="sm"
-                      />
-                      <div className="min-w-0">
-                        <div className="text-xs font-semibold text-[#E8EBE4] truncate">
-                          {trainer.first_name} {trainer.last_name}
-                        </div>
-                        <div className="text-[10px] text-[#6B6E67]">
-                          max {trainer.max_clients_per_slot}/slot
+            <tbody className="divide-y divide-[#1A1C18]">
+              {gridData.map(({ trainer, isOnLeave, slots: trainerSlots }) => {
+                const workingSlots = trainerSlots.filter((s) => s.isWorking && !s.isBlocked && !isOnLeave);
+                const used = workingSlots.reduce((s, sl) => s + sl.current, 0);
+                const cap  = workingSlots.reduce((s, sl) => s + sl.max, 0);
+                const pct  = cap > 0 ? Math.round((used / cap) * 100) : 0;
+
+                return (
+                  <tr key={trainer.id} className="group hover:bg-[#1E2020]/50 transition-colors">
+                    <td className="sticky left-0 bg-[#222520] group-hover:bg-[#1E2020]/80 px-5 py-2.5 z-10 transition-colors">
+                      <div className="flex items-center gap-2.5">
+                        <Avatar firstName={trainer.first_name} lastName={trainer.last_name} src={trainer.profile_picture_url} size="sm" />
+                        <div className="min-w-0">
+                          <div className="text-xs font-semibold text-[#E8EBE4] truncate">
+                            {trainer.first_name} {trainer.last_name}
+                          </div>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            {isOnLeave ? (
+                              <span className="text-[9px] text-yellow-500 font-medium">On Leave</span>
+                            ) : (
+                              <>
+                                <div className="h-1 w-14 bg-[#2E3129] rounded-full overflow-hidden">
+                                  <div
+                                    className={`h-full rounded-full transition-all ${pct >= 90 ? "bg-red-400" : pct >= 50 ? "bg-amber-400" : "bg-[#B9E84A]"}`}
+                                    style={{ width: `${pct}%` }}
+                                  />
+                                </div>
+                                <span className="text-[9px] text-[#6B6E67]">{pct}%</span>
+                              </>
+                            )}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  </td>
-                  {filteredSlots.map(slotTime => {
-                    const slot = trainerSlots.find(s => s.time === slotTime);
-                    if (!slot) {
+                    </td>
+                    {filteredSlots.map((slotTime) => {
+                      const slot = trainerSlots.find((s) => s.time === slotTime);
                       return (
-                        <td key={slotTime} className="px-2 py-2.5">
-                          <div className="h-16 rounded-lg bg-[#1A1C18] border border-dashed border-[#2E3129]" />
+                        <td key={slotTime} className={`px-1.5 py-2 transition-colors ${highlight === slotTime ? "bg-[#B9E84A]/3" : ""}`}>
+                          {slot
+                            ? <CapacityCell slot={slot} isOnLeave={isOnLeave} />
+                            : <div className="h-14 rounded-lg bg-[#1A1C18]/40" />
+                          }
                         </td>
                       );
-                    }
-                    return (
-                      <td key={slotTime} className="px-2 py-2.5">
-                        <SlotCell slot={slot} isOnLeave={isOnLeave} />
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
+                    })}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
+
           {gridData.length === 0 && (
-            <div className="py-16 text-center text-sm text-[#6B6E67]">
-              No active trainers. Add trainers to see their schedule.
+            <div className="py-20 text-center text-sm text-[#6B6E67]">
+              No active trainers — add trainers to see their schedule here
             </div>
           )}
         </div>
-      </div>
-
-      {/* Summary */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {gridData.map(({ trainer, slots: ts, isOnLeave }) => {
-          const workingSlots = ts.filter(s => s.isWorking && !s.isBlocked && !isOnLeave);
-          const totalCap = workingSlots.reduce((s, sl) => s + sl.max, 0);
-          const totalUsed = workingSlots.reduce((s, sl) => s + sl.current, 0);
-          const pct = totalCap > 0 ? Math.round((totalUsed / totalCap) * 100) : 0;
-
-          return (
-            <div key={trainer.id} className="bg-[#222520] border border-[#2E3129] rounded-xl px-4 py-3">
-              <div className="flex items-center gap-2 mb-2">
-                <Avatar firstName={trainer.first_name} lastName={trainer.last_name} size="xs" />
-                <span className="text-xs font-medium text-[#E8EBE4]">{trainer.first_name}</span>
-              </div>
-              {isOnLeave ? (
-                <span className="text-xs text-yellow-600 font-medium">On Leave</span>
-              ) : (
-                <>
-                  <div className="flex justify-between text-xs mb-1">
-                    <span className="text-[#6B6E67]">Utilization</span>
-                    <span className="font-semibold text-[#E8EBE4]">{pct}%</span>
-                  </div>
-                  <div className="h-1.5 bg-[#222520] rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full ${pct >= 90 ? "bg-red-400" : pct >= 60 ? "bg-amber-400" : "bg-[#B9E84A]"}`}
-                      style={{ width: `${pct}%` }}
-                    />
-                  </div>
-                  <div className="text-[10px] text-[#6B6E67] mt-1">{totalUsed}/{totalCap} slots</div>
-                </>
-              )}
-            </div>
-          );
-        })}
       </div>
     </div>
   );
