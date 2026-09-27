@@ -3,6 +3,7 @@ import { createClient, getSessionUser } from "@/lib/supabase/server";
 import { Header } from "@/components/layout/header";
 import { Avatar } from "@/components/ui/avatar";
 import { formatTime, DAY_NAMES_FULL } from "@/lib/utils";
+import { AvailabilityFinder } from "./availability-finder";
 
 const DAYS = [1, 2, 3, 4, 5, 6, 0]; // Mon–Sun
 
@@ -22,9 +23,9 @@ export default async function ManagerAvailabilityPage() {
     0
   ).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
 
-  const [{ data: activeTrainersRaw }, { data: leavesRaw }] = await Promise.all([
+  const [{ data: activeTrainersRaw }, { data: leavesRaw }, { data: assignmentsRaw }] = await Promise.all([
     supabase.from("trainers")
-      .select("id, first_name, last_name, profile_picture_url, status")
+      .select("id, first_name, last_name, profile_picture_url, status, max_clients_per_slot")
       .eq("gym_id", gymId)
       .eq("status", "active")
       .order("first_name"),
@@ -33,10 +34,15 @@ export default async function ManagerAvailabilityPage() {
       .eq("gym_id", gymId)
       .gte("end_date", today)
       .lte("start_date", monthEnd),
+    supabase.from("pt_assignments")
+      .select("trainer_id, days_of_week, preferred_time")
+      .eq("gym_id", gymId)
+      .eq("status", "active"),
   ]);
 
   const activeTrainers = activeTrainersRaw ?? [];
   const leaves = leavesRaw ?? [];
+  const assignments = assignmentsRaw ?? [];
 
   let workingHours: any[] = [];
   if (activeTrainers.length > 0) {
@@ -61,6 +67,13 @@ export default async function ManagerAvailabilityPage() {
       <Header title="Availability" subtitle="Trainer working hours & upcoming leave" />
 
       <div className="px-8 py-6 space-y-6">
+        {/* Slot finder */}
+        <AvailabilityFinder
+          trainers={activeTrainers as any}
+          workingHours={workingHours}
+          assignments={assignments as any}
+        />
+
         {/* Weekly schedule grid */}
         <div className="bg-[#222520] border border-[#2E3129] rounded-2xl overflow-hidden">
           <div className="px-5 py-4 border-b border-[#2E3129]">
