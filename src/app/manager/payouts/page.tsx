@@ -3,6 +3,7 @@ import { createClient, getProfile } from "@/lib/supabase/server";
 import { Header } from "@/components/layout/header";
 import { formatCurrency } from "@/lib/utils";
 import { PayoutControls } from "./payout-controls";
+import { generatePayoutsForMonth } from "./actions";
 import Link from "next/link";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
@@ -10,6 +11,17 @@ const MONTH_NAMES = [
   "January","February","March","April","May","June",
   "July","August","September","October","November","December",
 ];
+
+async function fetchPayouts(supabase: any, gymId: string, month: number, year: number) {
+  const { data } = await supabase
+    .from("trainer_payouts")
+    .select("*, trainers(first_name, last_name, profile_picture_url, phone, email)")
+    .eq("gym_id", gymId)
+    .eq("period_month", month)
+    .eq("period_year", year)
+    .order("status");
+  return (data ?? []) as any[];
+}
 
 export default async function PayoutsPage({
   searchParams,
@@ -33,14 +45,8 @@ export default async function PayoutsPage({
 
   const supabase = await createClient();
 
-  const [{ data: payoutsRaw }, { data: trainersData }] = await Promise.all([
-    supabase
-      .from("trainer_payouts")
-      .select("*, trainers(first_name, last_name, profile_picture_url, phone, email)")
-      .eq("gym_id", gymId)
-      .eq("period_month", month)
-      .eq("period_year", year)
-      .order("status"),
+  const [payoutsInitial, { data: trainersData }] = await Promise.all([
+    fetchPayouts(supabase, gymId, month, year),
     supabase
       .from("trainers")
       .select("id, first_name, last_name")
@@ -48,13 +54,27 @@ export default async function PayoutsPage({
       .eq("status", "active"),
   ]);
 
-  const payouts = (payoutsRaw ?? []) as any[];
+  // Auto-generate/recalculate when:
+  //   • No records exist for this month (e.g. fresh month like October), OR
+  //   • All existing records are still in draft (stale data from before the
+  //     calculation fix — regenerating updates them with the correct algorithm).
+  // Records in reviewed/approved/paid status are never touched by generatePayoutsForMonth.
+  const allDraftOrEmpty =
+    payoutsInitial.length === 0 ||
+    payoutsInitial.every((p: any) => p.status === "draft");
+
+  let payouts = payoutsInitial;
+  if (allDraftOrEmpty) {
+    await generatePayoutsForMonth(month, year);
+    payouts = await fetchPayouts(supabase, gymId, month, year);
+  }
+
   const trainers = (trainersData ?? []) as any[];
 
-  const totalPayout = payouts.reduce((s, p) => s + (p.final_payout ?? 0), 0);
-  const draftCount = payouts.filter((p) => p.status === "draft").length;
+  const totalPayout = payouts.reduce((s: number, p: any) => s + (p.final_payout ?? 0), 0);
+  const draftCount = payouts.filter((p: any) => p.status === "draft").length;
   const approvedCount = payouts.filter(
-    (p) => p.status === "approved" || p.status === "paid"
+    (p: any) => p.status === "approved" || p.status === "paid"
   ).length;
 
   return (
