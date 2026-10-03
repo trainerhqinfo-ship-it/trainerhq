@@ -126,8 +126,8 @@ export default async function PayoutDetailPage({
             <h3 className="text-sm font-semibold text-[#E8EBE4]">Commission Breakdown</h3>
             <p className="text-xs text-[#6B6E67] mt-0.5">
               {breakdown
-                ? `${breakdown.breakdown.length} package${breakdown.breakdown.length !== 1 ? "s" : ""} in ${monthName} ${payout.period_year} · commission is per-package, not per session`
-                : "No packages found for this period or no commission rule configured"}
+                ? `${breakdown.breakdown.length} active PT client${breakdown.breakdown.length !== 1 ? "s" : ""} with packages starting in ${monthName} ${payout.period_year}`
+                : "No active PT clients with packages starting this period, or no commission rule configured"}
             </p>
           </div>
 
@@ -189,7 +189,7 @@ export default async function PayoutDetailPage({
                       className="px-5 py-3 text-xs font-semibold text-[#6B6E67] uppercase tracking-wide"
                       colSpan={3}
                     >
-                      Total ({breakdown.package_count} package{breakdown.package_count !== 1 ? "s" : ""})
+                      Total ({breakdown.package_count} active client{breakdown.package_count !== 1 ? "s" : ""})
                     </td>
                     <td className="px-5 py-3 text-sm font-semibold text-[#E8EBE4] tabular-nums">
                       {formatCurrency(breakdown.eligible_revenue)}

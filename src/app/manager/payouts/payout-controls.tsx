@@ -125,7 +125,7 @@ export function PayoutControls({ payouts, month, year }: Props) {
   function downloadSummaryCSV() {
     const headers = [
       "Month", "Trainer", "Trainer Phone", "Trainer Email",
-      "Commission Rule", "PT Packages", "PT Revenue", "PT Commission",
+      "Commission Rule", "Active PT Clients", "PT Revenue", "PT Commission",
       "Base Salary", "Adjustments", "Deductions", "Final Payout", "Status",
     ];
     const rows = [
@@ -227,7 +227,7 @@ export function PayoutControls({ payouts, month, year }: Props) {
                 {[
                   "Trainer",
                   "Commission Rule",
-                  "PT Packages",
+                  "Active PT Clients",
                   "PT Revenue",
                   "PT Commission",
                   "Base Salary",
