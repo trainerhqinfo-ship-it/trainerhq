@@ -45,17 +45,15 @@ export interface PayoutCalc {
  *   2. The client's CURRENT package is active (is_active=true).
  *   3. The client is active (pt_clients.status='active').
  *   4. The package's start_date falls within the payout month
- *      (commission is earned in the month the package is purchased).
+ *      (commission is earned in the month the package is purchased/started).
  *   5. Each client counted at most once (deduplication guard).
+ *
+ * Uses three separate queries — no FK joins — because pt_clients, pt_packages,
+ * and pt_assignments have no declared FK relationships in the schema.
  *
  * Commission formula:
  *   Fixed:      commission = commission_value  (₹ flat per package)
  *   Percentage: commission = amount_collected × commission_value / 100
- *
- * The applicable commission rule is found by package start_date vs effective_from/effective_to.
- *
- * Note on start_date fallback: if start_date is NULL, created_at::date is used.
- * This is only a safety net — packages should always have start_date set.
  */
 export async function calculatePayoutForTrainer(
   supabase: SupabaseClient<any>,
@@ -66,9 +64,9 @@ export async function calculatePayoutForTrainer(
 ): Promise<PayoutCalc | null> {
   const { periodStart, periodEnd } = getMonthPeriod(month, year);
 
-  // Step 1: Trainer's ACTIVE assignments (status='active' only).
-  // We no longer use package_id on assignments — that field is not reliably set
-  // (neither onboarding nor renewal sets it). We join through client_id instead.
+  // ── Query 1: Trainer's ACTIVE assignments ──────────────────────────────────
+  // Only status='active'. We join through client_id, not package_id, because
+  // neither onboarding nor renewal sets package_id on assignments.
   const { data: assignments } = await supabase
     .from("pt_assignments")
     .select("id, client_id")
@@ -78,55 +76,61 @@ export async function calculatePayoutForTrainer(
 
   if (!assignments || assignments.length === 0) return null;
 
-  // Deduplicate client_ids (guard against duplicate active assignments)
+  // Deduplicate client_ids (guard against multiple active assignments per client)
   const clientIds = [
     ...new Set((assignments as any[]).map((a) => a.client_id).filter(Boolean)),
   ];
   if (clientIds.length === 0) return null;
 
-  // Step 2: Current packages for these clients.
+  // ── Query 2: Client info + status (separate query — no FK join available) ──
+  const { data: clientsRaw } = await supabase
+    .from("pt_clients")
+    .select("id, first_name, last_name, status")
+    .in("id", clientIds)
+    .eq("gym_id", gymId);
+
+  const clientMap: Record<string, any> = {};
+  const activeClientIds = new Set<string>();
+  for (const c of (clientsRaw ?? []) as any[]) {
+    clientMap[c.id] = c;
+    if (c.status === "active") activeClientIds.add(c.id);
+  }
+
+  if (activeClientIds.size === 0) return null;
+
+  // ── Query 3: Current active packages for active clients ────────────────────
   // is_active=true means this is the client's non-replaced, current package.
-  // Join pt_clients to check client status.
   const { data: packagesRaw } = await supabase
     .from("pt_packages")
-    .select(
-      "id, client_id, package_name, amount_collected, total_sessions, start_date, end_date, created_at, pt_clients(id, first_name, last_name, status)"
-    )
-    .in("client_id", clientIds)
+    .select("id, client_id, package_name, amount_collected, total_sessions, start_date, end_date, created_at")
+    .in("client_id", [...activeClientIds])
     .eq("gym_id", gymId)
     .eq("is_active", true);
 
-  // Step 3: Apply date + client-status filter; deduplicate per client.
-  // Commission is earned in the month the package starts (start_date IN period).
-  // Only active clients are eligible.
-  const packagesByClient: Record<
-    string,
-    { pkg: any; date: string; client: any }
-  > = {};
+  // ── Filter: package must have started in this payout month ────────────────
+  // Commission is earned in the month the package starts.
+  // Fallback: if start_date is null, use created_at date (legacy safety net).
+  // Deduplication: one entry per client (keep latest start_date if multiple).
+  const packagesByClient: Record<string, { pkg: any; date: string }> = {};
 
   for (const pkg of (packagesRaw ?? []) as any[]) {
-    const client = pkg.pt_clients;
-    if (!client || client.status !== "active") continue;
+    if (!activeClientIds.has(pkg.client_id)) continue;
 
-    // Primary date: start_date. Fallback: created_at (safety net for legacy data).
     const date: string =
       pkg.start_date ?? (pkg.created_at as string | undefined)?.slice(0, 10) ?? "";
 
-    // Package must have started in this payout month
     if (date < periodStart || date >= periodEnd) continue;
 
-    // Deduplication: if multiple is_active=true packages for same client (data
-    // integrity violation), keep the one with the latest start_date.
     const existing = packagesByClient[pkg.client_id];
     if (!existing || date > existing.date) {
-      packagesByClient[pkg.client_id] = { pkg, date, client };
+      packagesByClient[pkg.client_id] = { pkg, date };
     }
   }
 
   const periodEntries = Object.values(packagesByClient);
   if (periodEntries.length === 0) return null;
 
-  // Step 4: Commission rules for this trainer, ordered for deterministic lookup.
+  // ── Query 4: Commission rules ──────────────────────────────────────────────
   const { data: rules } = await supabase
     .from("trainer_commission_rules")
     .select("id, commission_type, commission_value, effective_from, effective_to, created_at")
@@ -147,19 +151,20 @@ export async function calculatePayoutForTrainer(
     if (applicable.length === 0) return null;
     if (applicable.length > 1) {
       console.warn(
-        `[payout-utils] Data integrity: trainer ${trainerId} has ${applicable.length} commission rules that apply to package date ${packageDate}. ` +
-          `Using rule ${(applicable[0] as any).id}. Resolve duplicate rules to remove ambiguity.`
+        `[payout-utils] trainer ${trainerId} has ${applicable.length} overlapping commission rules for date ${packageDate}. ` +
+          `Using rule ${(applicable[0] as any).id}. Resolve duplicates to remove ambiguity.`
       );
     }
     return applicable[0] as any;
   }
 
-  // Step 5: Build per-client breakdown
+  // ── Build per-client breakdown ─────────────────────────────────────────────
   const breakdown: ClientBreakdown[] = [];
   let totalRevenue = 0;
   let totalCommission = 0;
 
-  for (const { pkg, date, client } of periodEntries) {
+  for (const { pkg, date } of periodEntries) {
+    const client = clientMap[pkg.client_id];
     const amountCollected = Number(pkg.amount_collected ?? 0);
     totalRevenue += amountCollected;
 
@@ -176,15 +181,16 @@ export async function calculatePayoutForTrainer(
         commission =
           Math.round((amountCollected * Number(rule.commission_value)) / 100 * 100) / 100;
       } else {
+        // fixed_per_session = fixed per package
         commission = Number(rule.commission_value);
       }
       totalCommission += commission;
     }
 
     breakdown.push({
-      client_id: client.id,
-      first_name: client.first_name ?? "Unknown",
-      last_name: client.last_name ?? "",
+      client_id: pkg.client_id,
+      first_name: client?.first_name ?? "Unknown",
+      last_name: client?.last_name ?? "",
       package_id: pkg.id,
       package_name: pkg.package_name ?? null,
       package_date: date,
