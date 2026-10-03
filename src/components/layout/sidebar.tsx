@@ -73,7 +73,8 @@ const trainerNavGroups: NavGroup[] = [
   },
 ];
 
-function getMonogram(name: string): string {
+function getMonogram(name: string | undefined): string {
+  if (!name) return "";
   return name
     .split(/\s+/)
     .filter(Boolean)
