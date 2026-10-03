@@ -1,11 +1,13 @@
 "use client";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
 import { ScheduleGrid, type TrainerRow, type ClientSlotInfo } from "@/components/schedule/schedule-grid";
 import { SlotAssignDrawer } from "./slot-assign-drawer";
 import { SlotDetailDrawer } from "./slot-detail-drawer";
 import { Avatar } from "@/components/ui/avatar";
-import { AlertTriangle, Plus, CheckCircle, Link2, CalendarDays, UserPlus, Users } from "lucide-react";
+import { Dialog } from "@/components/ui/dialog";
+import { AlertTriangle, Plus, CheckCircle, Link2, CalendarDays, UserPlus, Users, RefreshCw, Eye, ChevronRight } from "lucide-react";
+import type { ExpiryEntry } from "./expiry-types";
 
 interface ClientOption {
   id: string;
@@ -38,6 +40,7 @@ interface DashboardContentProps {
   gymId: string;
   userId: string;
   alerts: Alert[];
+  expiryData: ExpiryEntry[];
 }
 
 function KpiChip({
@@ -75,6 +78,161 @@ function formatHour(h: number) {
   return h < 12 ? `${h} AM` : `${h - 12} PM`;
 }
 
+function statusLabel(status: ExpiryEntry["status"], days: number) {
+  if (status === "expired") return `${Math.abs(days)}d overdue`;
+  if (status === "today") return "Expires today";
+  return `${days}d left`;
+}
+
+function ExpiryRow({ entry, onClose }: { entry: ExpiryEntry; onClose: () => void }) {
+  const isExpired = entry.status === "expired";
+  return (
+    <div className={`rounded-xl border p-3.5 ${isExpired ? "bg-red-500/5 border-red-500/20" : "bg-orange-500/5 border-orange-500/20"}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-semibold text-[#E8EBE4] truncate">{entry.clientName}</span>
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+              isExpired ? "bg-red-500/15 text-red-400" : "bg-orange-500/15 text-orange-400"
+            }`}>
+              {statusLabel(entry.status, entry.daysUntilExpiry)}
+            </span>
+          </div>
+          <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-[11px] text-[#6B6E67]">
+            {entry.clientPhone && <span>{entry.clientPhone}</span>}
+            {entry.trainerName && <span>Trainer: {entry.trainerName}</span>}
+            {entry.packageName && <span>{entry.packageName}</span>}
+            {entry.startDate && <span>{entry.startDate} → {entry.endDate}</span>}
+            {entry.amountCollected != null && (
+              <span>₹{entry.amountCollected.toLocaleString("en-IN")}</span>
+            )}
+          </div>
+        </div>
+      </div>
+      <div className="mt-2.5 flex gap-2">
+        <Link
+          href={`/manager/clients/${entry.clientId}`}
+          onClick={onClose}
+          className="inline-flex items-center gap-1 h-7 px-2.5 rounded-lg border border-[#2E3129] text-[11px] text-[#9B9E96] hover:bg-[#1A1C18] transition-colors"
+        >
+          <Eye size={10} /> View Client
+        </Link>
+        <Link
+          href={`/manager/clients/${entry.clientId}/packages/new`}
+          onClick={onClose}
+          className={`inline-flex items-center gap-1 h-7 px-2.5 rounded-lg text-[11px] font-semibold transition-colors ${
+            isExpired
+              ? "bg-[#B9E84A] text-[#171917] hover:bg-[#A8D63A]"
+              : "bg-orange-500/10 border border-orange-500/30 text-orange-400 hover:bg-orange-500/20"
+          }`}
+        >
+          <RefreshCw size={10} /> Renew Package
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+function ExpiryAlertDialog({ expiryData }: { expiryData: ExpiryEntry[] }) {
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (expiryData.length === 0) return;
+    try {
+      const dismissed = sessionStorage.getItem("expiry-alert-dismissed");
+      if (!dismissed) setOpen(true);
+    } catch {
+      // sessionStorage not available (private browsing etc.)
+    }
+  }, [expiryData.length]);
+
+  function handleClose() {
+    setOpen(false);
+    try { sessionStorage.setItem("expiry-alert-dismissed", "1"); } catch {}
+  }
+
+  const expired = expiryData.filter((e) => e.status === "expired");
+  const today = expiryData.filter((e) => e.status === "today");
+  const sevenDays = expiryData.filter((e) => e.status === "7days");
+  const thirtyDays = expiryData.filter((e) => e.status === "30days");
+
+  const summaryParts = [
+    expired.length > 0 && `${expired.length} Expired`,
+    today.length + sevenDays.length > 0 && `${today.length + sevenDays.length} Due in 7 Days`,
+    thirtyDays.length > 0 && `${thirtyDays.length} Due in 30 Days`,
+  ].filter(Boolean);
+
+  const dialogTitle = expired.length > 0
+    ? `PT Packages Expired`
+    : `PT Packages Expiring Soon`;
+  const dialogDesc = expired.length > 0
+    ? `${expired.length} client${expired.length !== 1 ? "s have" : " has"} an expired PT package`
+    : `${expiryData.length} PT package${expiryData.length !== 1 ? "s are" : " is"} expiring soon`;
+
+  if (expiryData.length === 0) return null;
+
+  return (
+    <Dialog open={open} onClose={handleClose} title={dialogTitle} description={dialogDesc} size="lg">
+      <div className="space-y-4">
+        {/* Summary chips */}
+        {summaryParts.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {summaryParts.map((part, i) => (
+              <span key={i} className={`text-[11px] font-semibold px-3 py-1 rounded-full border ${
+                i === 0 && expired.length > 0 ? "bg-red-500/10 text-red-400 border-red-500/20" : "bg-orange-500/10 text-orange-400 border-orange-500/20"
+              }`}>
+                {part}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* Expired clients — show up to 5 */}
+        {expired.length > 0 && (
+          <div className="space-y-2">
+            <div className="text-[10px] font-semibold text-red-400 uppercase tracking-wider">Expired</div>
+            {expired.slice(0, 5).map((entry) => (
+              <ExpiryRow key={entry.clientId} entry={entry} onClose={handleClose} />
+            ))}
+            {expired.length > 5 && (
+              <p className="text-xs text-[#6B6E67] text-center pt-1">
+                +{expired.length - 5} more expired — see all on the renewals page
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* Upcoming — show first 3 */}
+        {(today.length + sevenDays.length + thirtyDays.length > 0) && (
+          <div className="space-y-2">
+            <div className="text-[10px] font-semibold text-orange-400 uppercase tracking-wider">Expiring Soon</div>
+            {[...today, ...sevenDays, ...thirtyDays].slice(0, 3).map((entry) => (
+              <ExpiryRow key={entry.clientId} entry={entry} onClose={handleClose} />
+            ))}
+          </div>
+        )}
+
+        {/* Footer */}
+        <div className="flex items-center justify-between pt-2 border-t border-[#2E3129]">
+          <Link
+            href="/manager/renewals"
+            onClick={handleClose}
+            className="inline-flex items-center gap-1 text-xs text-[#B9E84A] hover:underline font-medium"
+          >
+            View All Renewals <ChevronRight size={12} />
+          </Link>
+          <button
+            onClick={handleClose}
+            className="h-8 px-4 rounded-lg border border-[#2E3129] text-xs text-[#9B9E96] hover:bg-[#1A1C18] transition-colors"
+          >
+            Dismiss
+          </button>
+        </div>
+      </div>
+    </Dialog>
+  );
+}
+
 export function DashboardContent({
   date,
   slots,
@@ -84,6 +242,7 @@ export function DashboardContent({
   gymId,
   userId,
   alerts,
+  expiryData,
 }: DashboardContentProps) {
   const [assignSlot, setAssignSlot] = useState<{
     trainer: TrainerRow["trainer"];
@@ -118,8 +277,14 @@ export function DashboardContent({
       .filter(Boolean) as { trainer: TrainerRow["trainer"]; open: number; max: number }[];
   }, [gridData, nowSlotTime, date]);
 
+  const expiredCount = expiryData.filter((e) => e.status === "expired").length;
+  const soonCount = expiryData.filter((e) => e.status !== "expired").length;
+
   return (
     <div className="space-y-5">
+      {/* Expiry alert popup */}
+      <ExpiryAlertDialog expiryData={expiryData} />
+
       {/* KPI strip */}
       <div className="flex flex-wrap items-center gap-2">
         <KpiChip label="Active Trainers" value={kpis.activeTrainers} />
@@ -129,6 +294,31 @@ export function DashboardContent({
         <KpiChip label="Free" value={kpis.freeSlots} accent />
         {kpis.onLeave > 0 && <KpiChip label="On Leave" value={kpis.onLeave} warn />}
       </div>
+
+      {/* Persistent expiry banner (shows even after dialog dismissed) */}
+      {expiryData.length > 0 && (
+        <Link
+          href="/manager/renewals"
+          className="flex items-center justify-between px-4 py-3 rounded-xl border border-red-500/30 bg-red-500/5 hover:bg-red-500/10 transition-colors group"
+        >
+          <div className="flex items-center gap-2.5 text-xs">
+            <AlertTriangle size={13} className="text-red-400 flex-shrink-0" />
+            <span className="text-[#E8EBE4]">
+              {expiredCount > 0 && (
+                <><span className="font-semibold text-red-400">{expiredCount} expired</span>{" "}</>
+              )}
+              {expiredCount > 0 && soonCount > 0 && "· "}
+              {soonCount > 0 && (
+                <><span className="text-orange-400">{soonCount} expiring soon</span>{" "}</>
+              )}
+              <span className="text-[#6B6E67]">— PT packages</span>
+            </span>
+          </div>
+          <span className="text-[10px] text-[#B9E84A] font-semibold group-hover:underline">
+            View Renewals →
+          </span>
+        </Link>
+      )}
 
       {/* Schedule grid — main viewport */}
       <ScheduleGrid

@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { createClient, getProfile, getGymData } from "@/lib/supabase/server";
 import { Bell } from "lucide-react";
 import { DashboardContent } from "./dashboard-content";
+import type { ExpiryEntry } from "./expiry-types";
 
 function getGreeting(): string {
   const h = parseInt(
@@ -42,6 +43,8 @@ export default async function ManagerDashboard({
     { data: blockedRaw },
     { data: clientsRaw },
     { data: flaggedRaw },
+    { data: packagesRaw },
+    { data: assignmentsWithTrainersRaw },
   ] = await Promise.all([
     supabase
       .from("trainers")
@@ -80,6 +83,19 @@ export default async function ManagerDashboard({
       .select("id")
       .eq("gym_id", gymId)
       .eq("is_flagged", true),
+    // Package expiry: all packages ordered newest-first so grouping picks latest per client
+    supabase
+      .from("pt_packages")
+      .select("id, client_id, package_name, start_date, end_date, amount_collected, created_at, pt_clients(id, first_name, last_name, phone)")
+      .eq("gym_id", gymId)
+      .order("start_date", { ascending: false })
+      .order("created_at", { ascending: false }),
+    // Active assignments with trainer names for the expiry popup
+    supabase
+      .from("pt_assignments")
+      .select("client_id, trainer_id, id, trainers(first_name, last_name)")
+      .eq("gym_id", gymId)
+      .eq("status", "active"),
   ]);
 
   const trainers = (trainersRaw as any[] | null) ?? [];
@@ -252,6 +268,58 @@ export default async function ManagerDashboard({
     });
   }
 
+  // Compute PT package expiry data
+  const packagesAll = (packagesRaw as any[] | null) ?? [];
+  const assignmentsWithTrainers = (assignmentsWithTrainersRaw as any[] | null) ?? [];
+
+  // Build trainer lookup by client_id (first active assignment wins)
+  const trainerByClientId = new Map<string, { id: string; name: string; assignmentId: string }>();
+  for (const a of assignmentsWithTrainers) {
+    if (!trainerByClientId.has(a.client_id)) {
+      const t = (a as any).trainers;
+      trainerByClientId.set(a.client_id, {
+        id: a.trainer_id,
+        name: t ? `${t.first_name} ${t.last_name}` : "",
+        assignmentId: a.id,
+      });
+    }
+  }
+
+  // Group packages by client_id — list is already sorted newest-first, so first entry per client = latest
+  const latestPkgByClient = new Map<string, any>();
+  for (const pkg of packagesAll) {
+    if (!latestPkgByClient.has(pkg.client_id)) {
+      latestPkgByClient.set(pkg.client_id, pkg);
+    }
+  }
+
+  const todayMS = new Date(targetDate + "T00:00:00").getTime();
+  const expiryData: ExpiryEntry[] = [];
+  for (const [clientId, pkg] of latestPkgByClient) {
+    if (!pkg.end_date) continue; // no end date = indefinite, skip
+    const endMS = new Date(pkg.end_date + "T00:00:00").getTime();
+    const daysUntilExpiry = Math.round((endMS - todayMS) / 86400000);
+    if (daysUntilExpiry > 30) continue; // not relevant yet
+    const c = (pkg as any).pt_clients;
+    const trainerInfo = trainerByClientId.get(clientId);
+    expiryData.push({
+      clientId,
+      clientName: c ? `${c.first_name} ${c.last_name}` : "Unknown",
+      clientPhone: c?.phone ?? null,
+      trainerName: trainerInfo?.name ?? null,
+      trainerId: trainerInfo?.id ?? null,
+      assignmentId: trainerInfo?.assignmentId ?? null,
+      packageId: pkg.id,
+      packageName: pkg.package_name ?? null,
+      startDate: pkg.start_date,
+      endDate: pkg.end_date,
+      daysUntilExpiry,
+      amountCollected: pkg.amount_collected ?? null,
+      status: daysUntilExpiry < 0 ? "expired" : daysUntilExpiry === 0 ? "today" : daysUntilExpiry <= 7 ? "7days" : "30days",
+    });
+  }
+  expiryData.sort((a, b) => a.daysUntilExpiry - b.daysUntilExpiry);
+
   const managerName = profile.firstName;
   const gymName = gymData?.name ?? "Iron Kingdom";
   const gymBranch = gymData?.branch_name ?? null;
@@ -304,6 +372,7 @@ export default async function ManagerDashboard({
           gymId={gymId}
           userId={profile.user.id}
           alerts={alerts}
+          expiryData={expiryData}
         />
       </div>
     </div>

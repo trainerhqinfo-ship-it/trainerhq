@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 import {
   LayoutDashboard, CalendarDays, Users, UserCheck, Link2,
   Clock, CheckSquare, DollarSign, BarChart3, MessageSquare,
-  Settings, TrendingUp, Star, LogOut, ChevronRight,
+  Settings, TrendingUp, Star, LogOut, ChevronRight, RefreshCw,
 } from "lucide-react";
 import { Avatar } from "@/components/ui/avatar";
 
@@ -20,6 +20,7 @@ const managerNavGroups: NavGroup[] = [
       { label: "Schedule",    href: "/manager/schedule",    icon: <CalendarDays size={14} /> },
       { label: "Trainers",    href: "/manager/trainers",    icon: <Users size={14} /> },
       { label: "PT Clients",  href: "/manager/clients",     icon: <UserCheck size={14} /> },
+      { label: "Renewals",    href: "/manager/renewals",    icon: <RefreshCw size={14} /> },
     ],
   },
   {
