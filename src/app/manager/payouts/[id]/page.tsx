@@ -6,10 +6,11 @@ import { Avatar } from "@/components/ui/avatar";
 import { formatCurrency } from "@/lib/utils";
 import { calculatePayoutForTrainer } from "@/lib/payout-utils";
 import { PayoutDetailControls } from "./payout-detail-controls";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Phone, Mail } from "lucide-react";
 
 const MONTH_NAMES = [
-  "Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec",
+  "January","February","March","April","May","June",
+  "July","August","September","October","November","December",
 ];
 
 function fmtDate(d: string) {
@@ -36,7 +37,7 @@ export default async function PayoutDetailPage({
 
   const { data: payoutRaw } = await supabase
     .from("trainer_payouts")
-    .select("*, trainers(first_name, last_name, profile_picture_url, role_title)")
+    .select("*, trainers(first_name, last_name, profile_picture_url, role_title, phone, email)")
     .eq("id", id)
     .eq("gym_id", gymId)
     .single();
@@ -44,6 +45,9 @@ export default async function PayoutDetailPage({
   if (!payoutRaw) notFound();
 
   const payout = payoutRaw as any;
+  const trainer = payout.trainers;
+  const monthName = MONTH_NAMES[payout.period_month - 1];
+  const trainerFullName = `${trainer?.first_name ?? ""} ${trainer?.last_name ?? ""}`.trim();
 
   const breakdown = await calculatePayoutForTrainer(
     supabase,
@@ -53,13 +57,10 @@ export default async function PayoutDetailPage({
     payout.period_year
   );
 
-  const trainer = payout.trainers;
-  const monthName = MONTH_NAMES[payout.period_month - 1];
-
   return (
     <div>
       <Header
-        title={`${trainer?.first_name ?? ""} ${trainer?.last_name ?? ""}`}
+        title={trainerFullName || "Trainer"}
         subtitle={`Payout · ${monthName} ${payout.period_year}`}
         actions={
           <Link
@@ -74,44 +75,59 @@ export default async function PayoutDetailPage({
       <div className="px-8 py-6 space-y-5">
         {/* Trainer card */}
         <div className="bg-[#222520] border border-[#2E3129] rounded-2xl p-5">
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 flex-wrap">
             <Avatar
               firstName={trainer?.first_name ?? "?"}
               lastName={trainer?.last_name ?? ""}
               src={trainer?.profile_picture_url ?? null}
               size="lg"
             />
-            <div>
+            <div className="flex-1 min-w-0">
               <h2 className="text-base font-semibold text-[#E8EBE4]">
                 {trainer?.first_name} {trainer?.last_name}
               </h2>
               {trainer?.role_title && (
                 <p className="text-sm text-[#9B9E96]">{trainer.role_title}</p>
               )}
-              <p className="text-xs text-[#6B6E67] mt-0.5">
-                {monthName} {payout.period_year}
-                {" · "}
-                {payout.commission_type === "percentage"
-                  ? `${payout.commission_value}% of package value`
-                  : `₹${payout.commission_value} fixed per package`}
-              </p>
+              <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1">
+                {trainer?.phone && (
+                  <span className="flex items-center gap-1 text-xs text-[#6B6E67]">
+                    <Phone size={10} /> {trainer.phone}
+                  </span>
+                )}
+                {trainer?.email && (
+                  <span className="flex items-center gap-1 text-xs text-[#6B6E67]">
+                    <Mail size={10} /> {trainer.email}
+                  </span>
+                )}
+                <span className="text-xs text-[#6B6E67]">
+                  {monthName} {payout.period_year}
+                  {" · "}
+                  {payout.commission_type === "percentage"
+                    ? `${payout.commission_value}% of package value`
+                    : `₹${payout.commission_value} fixed per package`}
+                </span>
+              </div>
             </div>
           </div>
         </div>
 
         {/* Status + earnings (client component) */}
-        <PayoutDetailControls payout={payout} />
+        <PayoutDetailControls
+          payout={payout}
+          breakdown={breakdown?.breakdown ?? null}
+          trainerName={trainerFullName}
+          monthName={monthName}
+        />
 
-        {/* Commission breakdown */}
+        {/* Commission breakdown table */}
         <div className="bg-[#222520] border border-[#2E3129] rounded-2xl overflow-hidden">
           <div className="px-5 py-4 border-b border-[#2E3129]">
-            <h3 className="text-sm font-semibold text-[#E8EBE4]">
-              Commission Breakdown
-            </h3>
+            <h3 className="text-sm font-semibold text-[#E8EBE4]">Commission Breakdown</h3>
             <p className="text-xs text-[#6B6E67] mt-0.5">
               {breakdown
                 ? `${breakdown.breakdown.length} package${breakdown.breakdown.length !== 1 ? "s" : ""} in ${monthName} ${payout.period_year} · commission is per-package, not per session`
-                : "No packages found for this period or no commission rule"}
+                : "No packages found for this period or no commission rule configured"}
             </p>
           </div>
 
@@ -120,14 +136,7 @@ export default async function PayoutDetailPage({
               <table className="w-full min-w-[700px]">
                 <thead>
                   <tr className="border-b border-[#1A1C18]">
-                    {[
-                      "Client",
-                      "Package",
-                      "Package Date",
-                      "Amount Paid",
-                      "Rule",
-                      "Commission",
-                    ].map((h) => (
+                    {["Client","Package","Package Date","Amount Paid","Rule","Commission"].map((h) => (
                       <th
                         key={h}
                         className="text-left px-5 py-3 text-[11px] font-semibold text-[#6B6E67] uppercase tracking-wide"
@@ -139,17 +148,12 @@ export default async function PayoutDetailPage({
                 </thead>
                 <tbody className="divide-y divide-[#1A1C18]">
                   {breakdown.breakdown.map((row) => (
-                    <tr
-                      key={row.package_id}
-                      className="hover:bg-[#1A1C18]/50 transition-colors"
-                    >
+                    <tr key={row.package_id} className="hover:bg-[#1A1C18]/50 transition-colors">
                       <td className="px-5 py-3 text-sm font-medium text-[#E8EBE4]">
                         {row.first_name} {row.last_name}
                       </td>
                       <td className="px-5 py-3">
-                        <div className="text-sm text-[#E8EBE4]">
-                          {row.package_name ?? "—"}
-                        </div>
+                        <div className="text-sm text-[#E8EBE4]">{row.package_name ?? "—"}</div>
                         {row.sessions_total != null && (
                           <div className="text-[10px] text-[#6B6E67] mt-0.5">
                             {row.sessions_total} sessions (informational)
@@ -168,16 +172,18 @@ export default async function PayoutDetailPage({
                         ) : row.commission_type === "percentage" ? (
                           <span>{row.commission_rate}%</span>
                         ) : (
-                          <span>Fixed {formatCurrency(row.commission_rate ?? 0)}</span>
+                          <span>₹{row.commission_rate?.toLocaleString("en-IN")}/package</span>
                         )}
                       </td>
                       <td className="px-5 py-3 text-sm font-semibold text-[#B9E84A] tabular-nums">
-                        {row.commission > 0 ? formatCurrency(row.commission) : <span className="text-[#6B6E67]">—</span>}
+                        {row.commission > 0
+                          ? formatCurrency(row.commission)
+                          : <span className="text-[#6B6E67]">—</span>}
                       </td>
                     </tr>
                   ))}
 
-                  {/* Totals */}
+                  {/* Totals row */}
                   <tr className="bg-[#1A1C18] border-t-2 border-[#2E3129]">
                     <td
                       className="px-5 py-3 text-xs font-semibold text-[#6B6E67] uppercase tracking-wide"
@@ -200,12 +206,12 @@ export default async function PayoutDetailPage({
             <div className="px-5 py-10 text-center text-sm text-[#6B6E67]">
               {breakdown
                 ? "No packages with a start_date in this period"
-                : "No commission rule found for this period — set a commission rule for this trainer first"}
+                : "No commission rule found — set a commission rule for this trainer first"}
             </div>
           )}
         </div>
 
-        {/* Link to trainer profile */}
+        {/* Trainer profile link */}
         <div className="flex justify-end">
           <Link
             href={`/manager/trainers/${payout.trainer_id}`}

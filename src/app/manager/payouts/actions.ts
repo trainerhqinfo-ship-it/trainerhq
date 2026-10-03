@@ -391,3 +391,121 @@ export async function generatePayoutsForMonth(month: number, year: number) {
   revalidatePath("/manager/payouts");
   return results;
 }
+
+// ── Detailed per-package CSV for download ─────────────────────────────────────
+const FULL_MONTH_NAMES = [
+  "January","February","March","April","May","June",
+  "July","August","September","October","November","December",
+];
+
+function csvEscape(v: string | number | null | undefined): string {
+  return `"${String(v ?? "").replace(/"/g, '""')}"`;
+}
+
+export async function getDetailedPayoutsCSV(month: number, year: number): Promise<string> {
+  const p = await getProfile();
+  if (!p) throw new Error("Unauthorized");
+  const { gymId } = p;
+
+  const supabase = await createClient();
+  const monthName = FULL_MONTH_NAMES[month - 1];
+
+  const { data: payoutsRaw } = await supabase
+    .from("trainer_payouts")
+    .select("*, trainers(first_name, last_name, phone, email)")
+    .eq("gym_id", gymId)
+    .eq("period_month", month)
+    .eq("period_year", year);
+
+  const payouts = (payoutsRaw ?? []) as any[];
+  if (payouts.length === 0) return "";
+
+  // For each payout, run the authoritative breakdown calculation
+  const trainerData: Array<{ payout: any; calc: Awaited<ReturnType<typeof calculatePayoutForTrainer>> }> = [];
+  const allPackageIds: string[] = [];
+
+  for (const payout of payouts) {
+    const calc = await calculatePayoutForTrainer(supabase, payout.trainer_id, gymId, month, year);
+    trainerData.push({ payout, calc });
+    if (calc) {
+      for (const b of calc.breakdown) allPackageIds.push(b.package_id);
+    }
+  }
+
+  // Fetch end_dates for all package IDs in one query
+  const endDateMap: Record<string, string> = {};
+  if (allPackageIds.length > 0) {
+    const { data: pkgDates } = await supabase
+      .from("pt_packages")
+      .select("id, end_date")
+      .in("id", allPackageIds);
+    for (const pkg of (pkgDates ?? [])) {
+      endDateMap[(pkg as any).id] = (pkg as any).end_date ?? "";
+    }
+  }
+
+  const headers = [
+    "Month", "Trainer", "Trainer Phone", "Trainer Email",
+    "Client", "Package", "Package Start Date", "Package End Date",
+    "Amount Collected", "Commission Type", "Commission Rate", "Commission Earned",
+    "Base Salary", "Adjustments", "Deductions", "Final Payout", "Payout Status",
+  ];
+
+  const rows: string[] = [headers.map(csvEscape).join(",")];
+
+  for (const { payout, calc } of trainerData) {
+    const trainer = payout.trainers;
+    const trainerName = `${trainer?.first_name ?? ""} ${trainer?.last_name ?? ""}`.trim();
+    const baseSalary = payout.base_salary ?? 0;
+    const adjustments = payout.adjustments ?? 0;
+    const deductions = payout.deductions ?? 0;
+    const finalPayout = payout.final_payout ?? 0;
+    const status = payout.status;
+
+    if (calc && calc.breakdown.length > 0) {
+      for (const b of calc.breakdown) {
+        const commType = b.commission_type === "percentage" ? "Percentage" : "Fixed per package";
+        const commRate = b.commission_type === "percentage"
+          ? `${b.commission_rate}%`
+          : `₹${b.commission_rate}`;
+        rows.push([
+          csvEscape(`${monthName} ${year}`),
+          csvEscape(trainerName),
+          csvEscape(trainer?.phone ?? ""),
+          csvEscape(trainer?.email ?? ""),
+          csvEscape(`${b.first_name} ${b.last_name}`.trim()),
+          csvEscape(b.package_name ?? ""),
+          csvEscape(b.package_date),
+          csvEscape(endDateMap[b.package_id] ?? ""),
+          csvEscape(b.package_amount),
+          csvEscape(commType),
+          csvEscape(commRate),
+          csvEscape(b.commission),
+          csvEscape(baseSalary),
+          csvEscape(adjustments),
+          csvEscape(deductions),
+          csvEscape(finalPayout),
+          csvEscape(status),
+        ].join(","));
+      }
+    } else {
+      // Trainer has a payout record but no qualifying packages this month
+      rows.push([
+        csvEscape(`${monthName} ${year}`),
+        csvEscape(trainerName),
+        csvEscape(trainer?.phone ?? ""),
+        csvEscape(trainer?.email ?? ""),
+        csvEscape(""), csvEscape("No PT packages this period"),
+        csvEscape(""), csvEscape(""),
+        csvEscape(0), csvEscape(""), csvEscape(""), csvEscape(0),
+        csvEscape(baseSalary),
+        csvEscape(adjustments),
+        csvEscape(deductions),
+        csvEscape(finalPayout),
+        csvEscape(status),
+      ].join(","));
+    }
+  }
+
+  return rows.join("\n");
+}

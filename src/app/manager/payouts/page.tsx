@@ -3,9 +3,12 @@ import { createClient, getProfile } from "@/lib/supabase/server";
 import { Header } from "@/components/layout/header";
 import { formatCurrency } from "@/lib/utils";
 import { PayoutControls } from "./payout-controls";
+import Link from "next/link";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 
 const MONTH_NAMES = [
-  "Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec",
+  "January","February","March","April","May","June",
+  "July","August","September","October","November","December",
 ];
 
 export default async function PayoutsPage({
@@ -19,6 +22,11 @@ export default async function PayoutsPage({
   const month = monthParam ? parseInt(monthParam) : now.getMonth() + 1;
   const year = yearParam ? parseInt(yearParam) : now.getFullYear();
 
+  const prevMonth = month === 1 ? 12 : month - 1;
+  const prevYear = month === 1 ? year - 1 : year;
+  const nextMonth = month === 12 ? 1 : month + 1;
+  const nextYear = month === 12 ? year + 1 : year;
+
   const profile = await getProfile();
   if (!profile) redirect("/login");
   const { gymId } = profile;
@@ -28,7 +36,7 @@ export default async function PayoutsPage({
   const [{ data: payoutsRaw }, { data: trainersData }] = await Promise.all([
     supabase
       .from("trainer_payouts")
-      .select("*, trainers(first_name, last_name, profile_picture_url)")
+      .select("*, trainers(first_name, last_name, profile_picture_url, phone, email)")
       .eq("gym_id", gymId)
       .eq("period_month", month)
       .eq("period_year", year)
@@ -43,18 +51,11 @@ export default async function PayoutsPage({
   const payouts = (payoutsRaw ?? []) as any[];
   const trainers = (trainersData ?? []) as any[];
 
-  // Build last 6 months for selector
-  const months = Array.from({ length: 6 }, (_, i) => {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    return { m: d.getMonth() + 1, y: d.getFullYear() };
-  }).reverse();
-
   const totalPayout = payouts.reduce((s, p) => s + (p.final_payout ?? 0), 0);
   const draftCount = payouts.filter((p) => p.status === "draft").length;
   const approvedCount = payouts.filter(
     (p) => p.status === "approved" || p.status === "paid"
   ).length;
-  const paidCount = payouts.filter((p) => p.status === "paid").length;
 
   return (
     <div>
@@ -64,47 +65,40 @@ export default async function PayoutsPage({
       />
 
       <div className="px-8 py-6 space-y-5">
-        {/* Month selector */}
-        <div className="flex items-center gap-1 flex-wrap">
-          {months.map(({ m, y }) => {
-            const active = m === month && y === year;
-            return (
-              <a
-                key={`${m}-${y}`}
-                href={`/manager/payouts?month=${m}&year=${y}`}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                  active
-                    ? "bg-[#B9E84A] text-[#1A1C18]"
-                    : "text-[#6B6E67] hover:bg-[#222520] hover:text-[#E8EBE4]"
-                }`}
-              >
-                {MONTH_NAMES[m - 1]} {y}
-              </a>
-            );
-          })}
+        {/* Month navigation: ← prev | Month Year | next → */}
+        <div className="flex items-center gap-2">
+          <Link
+            href={`/manager/payouts?month=${prevMonth}&year=${prevYear}`}
+            className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[#2E3129] text-xs font-medium text-[#9B9E96] hover:bg-[#222520] hover:text-[#E8EBE4] transition-colors"
+          >
+            <ChevronLeft size={12} /> {MONTH_NAMES[prevMonth - 1]} {prevYear}
+          </Link>
+          <span className="text-sm font-semibold text-[#E8EBE4] px-4 py-1.5 bg-[#222520] border border-[#2E3129] rounded-lg min-w-[152px] text-center">
+            {MONTH_NAMES[month - 1]} {year}
+          </span>
+          <Link
+            href={`/manager/payouts?month=${nextMonth}&year=${nextYear}`}
+            className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[#2E3129] text-xs font-medium text-[#9B9E96] hover:bg-[#222520] hover:text-[#E8EBE4] transition-colors"
+          >
+            {MONTH_NAMES[nextMonth - 1]} {nextYear} <ChevronRight size={12} />
+          </Link>
         </div>
 
         {/* Summary cards */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
             { label: "Total Payable", value: formatCurrency(totalPayout) },
-            {
-              label: "Trainers with Payouts",
-              value: `${payouts.length} / ${trainers.length}`,
-            },
-            { label: "Approved / Paid", value: `${approvedCount}` },
-            { label: "Drafts", value: draftCount },
+            { label: "Trainers with Payouts", value: `${payouts.length} / ${trainers.length}` },
+            { label: "Approved / Paid", value: String(approvedCount) },
+            { label: "Drafts", value: String(draftCount) },
           ].map((card) => (
             <div key={card.label} className="metric-card">
-              <div className="text-xl font-bold text-[#E8EBE4] tabular-nums">
-                {card.value}
-              </div>
+              <div className="text-xl font-bold text-[#E8EBE4] tabular-nums">{card.value}</div>
               <div className="text-xs text-[#6B6E67] mt-0.5">{card.label}</div>
             </div>
           ))}
         </div>
 
-        {/* Generate + table (client component) */}
         <PayoutControls
           payouts={payouts}
           trainers={trainers}

@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { formatCurrency } from "@/lib/utils";
 import { StatusBadge } from "@/components/ui/badge";
+import { Download } from "lucide-react";
 import {
   updatePayoutStatus,
   updatePayoutAdjustment,
@@ -12,6 +13,7 @@ import {
 interface PayoutData {
   id: string;
   status: string;
+  period_year: number;
   base_salary: number | null;
   commission_type: string | null;
   commission_value: number | null;
@@ -24,8 +26,24 @@ interface PayoutData {
   final_payout: number | null;
 }
 
+interface BreakdownRow {
+  package_id: string;
+  first_name: string;
+  last_name: string;
+  package_name: string | null;
+  sessions_total: number | null;
+  package_date: string;
+  package_amount: number;
+  commission_type: string | null;
+  commission_rate: number | null;
+  commission: number;
+}
+
 interface Props {
   payout: PayoutData;
+  breakdown: BreakdownRow[] | null;
+  trainerName: string;
+  monthName: string;
 }
 
 const STATUS_ACTIONS: Record<string, { label: string; next: "reviewed" | "approved" | "paid" }> = {
@@ -33,6 +51,10 @@ const STATUS_ACTIONS: Record<string, { label: string; next: "reviewed" | "approv
   reviewed: { label: "Approve", next: "approved" },
   approved: { label: "Mark Paid", next: "paid" },
 };
+
+function csvEsc(v: string | number | null | undefined): string {
+  return `"${String(v ?? "").replace(/"/g, '""')}"`;
+}
 
 function InlineEditor({
   label,
@@ -130,7 +152,7 @@ function InlineEditor({
   );
 }
 
-export function PayoutDetailControls({ payout }: Props) {
+export function PayoutDetailControls({ payout, breakdown, trainerName, monthName }: Props) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState("");
 
@@ -153,10 +175,81 @@ export function PayoutDetailControls({ payout }: Props) {
     });
   }
 
+  function downloadTrainerPayout() {
+    const safeName = trainerName.replace(/\s+/g, "_").replace(/[^A-Za-z0-9_]/g, "");
+    const filename = `${safeName}_Payout_${monthName}_${payout.period_year}.csv`;
+
+    const headers = [
+      "Month", "Trainer", "Client", "Package",
+      "Package Start Date", "Amount Collected",
+      "Commission Type", "Commission Rate", "Commission Earned",
+      "Base Salary", "Adjustments", "Deductions", "Final Payout", "Status",
+    ];
+
+    const rows: string[] = [headers.map(csvEsc).join(",")];
+
+    const base = csvEsc(`${monthName} ${payout.period_year}`);
+    const tName = csvEsc(trainerName);
+    const bSalary = csvEsc(payout.base_salary ?? 0);
+    const adjVal = csvEsc(payout.adjustments ?? 0);
+    const dedVal = csvEsc(payout.deductions ?? 0);
+    const finalVal = csvEsc(payout.final_payout ?? 0);
+    const status = csvEsc(payout.status);
+
+    if (breakdown && breakdown.length > 0) {
+      breakdown.forEach((row, idx) => {
+        const ruleLabel =
+          row.commission_type === "percentage"
+            ? `${row.commission_rate}%`
+            : row.commission_type === "fixed_per_session"
+            ? `₹${row.commission_rate}/package`
+            : "No rule";
+
+        rows.push([
+          base,
+          tName,
+          csvEsc(`${row.first_name} ${row.last_name}`),
+          csvEsc(row.package_name ?? "—"),
+          csvEsc(row.package_date),
+          csvEsc(row.package_amount),
+          csvEsc(row.commission_type ?? "—"),
+          csvEsc(ruleLabel),
+          csvEsc(row.commission),
+          // Base salary / adj / ded / final only on first row; blank on subsequent
+          idx === 0 ? bSalary : csvEsc(""),
+          idx === 0 ? adjVal : csvEsc(""),
+          idx === 0 ? dedVal : csvEsc(""),
+          idx === 0 ? finalVal : csvEsc(""),
+          idx === 0 ? status : csvEsc(""),
+        ].join(","));
+      });
+    } else {
+      // No packages — single summary row
+      rows.push([
+        base,
+        tName,
+        csvEsc("No PT packages this period"),
+        csvEsc(""), csvEsc(""), csvEsc(""), csvEsc(""), csvEsc(""), csvEsc(""),
+        bSalary, adjVal, dedVal, finalVal, status,
+      ].join(","));
+    }
+
+    const content = "﻿" + rows.join("\n");
+    const blob = new Blob([content], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="bg-[#222520] border border-[#2E3129] rounded-2xl p-5 space-y-4">
 
-      {/* Status + action */}
+      {/* Status + action + download */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2.5">
           <StatusBadge status={payout.status} />
@@ -164,21 +257,29 @@ export function PayoutDetailControls({ payout }: Props) {
             <span className="text-xs text-[#6B6E67]">This payroll is locked</span>
           )}
         </div>
-        {action && (
+        <div className="flex items-center gap-2">
           <button
-            onClick={handleStatusChange}
-            disabled={isPending}
-            className={`text-xs font-semibold px-4 py-2 rounded-lg disabled:opacity-60 transition-colors ${
-              action.next === "paid"
-                ? "bg-[#B9E84A] text-[#171917] hover:bg-[#A8D63A]"
-                : action.next === "approved"
-                ? "border border-[#B9E84A]/40 text-[#B9E84A] hover:bg-[#B9E84A]/10"
-                : "border border-[#2E3129] text-[#9B9E96] hover:bg-[#2E3129] hover:text-[#E8EBE4]"
-            }`}
+            onClick={downloadTrainerPayout}
+            className="inline-flex items-center gap-1.5 text-xs text-[#9B9E96] hover:text-[#E8EBE4] px-3 py-2 rounded-lg border border-[#2E3129] hover:bg-[#1A1C18] transition-colors"
           >
-            {isPending ? "Updating…" : action.label}
+            <Download size={12} /> Download Trainer Payout
           </button>
-        )}
+          {action && (
+            <button
+              onClick={handleStatusChange}
+              disabled={isPending}
+              className={`text-xs font-semibold px-4 py-2 rounded-lg disabled:opacity-60 transition-colors ${
+                action.next === "paid"
+                  ? "bg-[#B9E84A] text-[#171917] hover:bg-[#A8D63A]"
+                  : action.next === "approved"
+                  ? "border border-[#B9E84A]/40 text-[#B9E84A] hover:bg-[#B9E84A]/10"
+                  : "border border-[#2E3129] text-[#9B9E96] hover:bg-[#2E3129] hover:text-[#E8EBE4]"
+              }`}
+            >
+              {isPending ? "Updating…" : action.label}
+            </button>
+          )}
+        </div>
       </div>
 
       {error && <p className="text-xs text-red-400">{error}</p>}
