@@ -1,115 +1,252 @@
 import { redirect } from "next/navigation";
 import { createClient, getSessionUser } from "@/lib/supabase/server";
-import { AlertTriangle, Bell, Plus, Link2, CalendarDays, UserPlus, Users } from "lucide-react";
-import Link from "next/link";
-import { PeakHoursChart, type CapacityHour } from "./peak-hours-chart";
-
-function KpiCard({ label, value, accent = false }: { label: string; value: number | string; accent?: boolean }) {
-  return (
-    <div className={`bg-[#222520] rounded-2xl p-5 border ${accent ? "border-[#B9E84A]/60" : "border-[#2E3129]"}`}>
-      <div className="text-[11px] font-medium text-[#6B6E67] uppercase tracking-wide mb-2">{label}</div>
-      <div className="text-3xl font-bold text-[#E8EBE4] tabular-nums leading-none">{value}</div>
-    </div>
-  );
-}
+import { Bell } from "lucide-react";
+import { DashboardContent } from "./dashboard-content";
 
 function getGreeting(): string {
-  const h = parseInt(new Date().toLocaleString("en-IN", { hour: "numeric", hour12: false, timeZone: "Asia/Kolkata" }));
+  const h = parseInt(
+    new Date().toLocaleString("en-IN", {
+      hour: "numeric",
+      hour12: false,
+      timeZone: "Asia/Kolkata",
+    })
+  );
   if (h < 12) return "Good morning";
   if (h < 17) return "Good afternoon";
   return "Good evening";
 }
 
-export default async function ManagerDashboard() {
+export default async function ManagerDashboard({
+  searchParams,
+}: {
+  searchParams: Promise<{ date?: string }>;
+}) {
+  const { date: dateParam } = await searchParams;
+  const targetDate =
+    dateParam ??
+    new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+  const targetDow = new Date(targetDate + "T00:00:00").getDay();
+
   const user = await getSessionUser();
   if (!user) redirect("/login");
 
   const supabase = await createClient();
-  const { data: profile } = await supabase.from("profiles").select("first_name, gym_id").eq("id", user.id).single();
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("first_name, gym_id")
+    .eq("id", user.id)
+    .single();
   const gymId = profile?.gym_id;
   if (!gymId) redirect("/login");
-
-  const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }); // YYYY-MM-DD in IST
 
   const [
     { data: gymData },
     { data: trainersRaw },
-    { data: clientsRaw },
     { data: sessionsRaw },
-    { data: leavesRaw },
-    { data: flaggedRaw },
     { data: assignmentsRaw },
+    { data: leavesRaw },
+    { data: blockedRaw },
+    { data: clientsRaw },
+    { data: flaggedRaw },
   ] = await Promise.all([
-    supabase.from("gyms").select("name, branch_name").eq("id", gymId).single(),
-    supabase.from("trainers").select("id, status, max_clients_per_slot, first_name, last_name, trainer_working_hours(*)").eq("gym_id", gymId),
-    supabase.from("pt_clients").select("id").eq("gym_id", gymId).eq("status", "active"),
-    supabase.from("pt_sessions").select("id, status, start_time, trainer_id").eq("gym_id", gymId).eq("session_date", today),
-    supabase.from("trainer_leaves").select("trainer_id").eq("gym_id", gymId).lte("start_date", today).gte("end_date", today),
-    supabase.from("trainer_feedback").select("id").eq("gym_id", gymId).eq("is_flagged", true),
-    supabase.from("pt_assignments").select("trainer_id, days_of_week, preferred_time").eq("gym_id", gymId).eq("status", "active"),
+    supabase.from("gyms").select("name, branch_name, default_slot_duration").eq("id", gymId).single(),
+    supabase
+      .from("trainers")
+      .select("*, trainer_working_hours(*)")
+      .eq("gym_id", gymId)
+      .eq("status", "active"),
+    supabase
+      .from("pt_sessions")
+      .select("*, pt_clients(id, first_name, last_name)")
+      .eq("gym_id", gymId)
+      .eq("session_date", targetDate),
+    supabase
+      .from("pt_assignments")
+      .select("*, pt_clients(id, first_name, last_name, profile_picture_url)")
+      .eq("gym_id", gymId)
+      .eq("status", "active"),
+    supabase
+      .from("trainer_leaves")
+      .select("trainer_id")
+      .eq("gym_id", gymId)
+      .lte("start_date", targetDate)
+      .gte("end_date", targetDate),
+    supabase
+      .from("trainer_blocked_slots" as any)
+      .select("*")
+      .eq("gym_id", gymId)
+      .eq("blocked_date", targetDate),
+    supabase
+      .from("pt_clients")
+      .select("id, first_name, last_name, phone, profile_picture_url, status")
+      .eq("gym_id", gymId)
+      .eq("status", "active")
+      .order("first_name"),
+    supabase
+      .from("trainer_feedback")
+      .select("id")
+      .eq("gym_id", gymId)
+      .eq("is_flagged", true),
   ]);
 
-  const trainers = trainersRaw ?? [];
-  const sessions = sessionsRaw ?? [];
-  const leaves = leavesRaw ?? [];
+  const trainers = (trainersRaw as any[] | null) ?? [];
+  const sessions = (sessionsRaw as any[] | null) ?? [];
+  const assignments = (assignmentsRaw as any[] | null) ?? [];
   const flagged = flaggedRaw ?? [];
-  const assignments = assignmentsRaw ?? [];
+  const leaveTodayIds = new Set(leavesRaw?.map((l: any) => l.trainer_id) ?? []);
+  const slotDuration = gymData?.default_slot_duration ?? 60;
 
-  const active = trainers.filter((t: any) => t.status === "active");
-  const leaveIds = new Set(leaves.map((l: any) => l.trainer_id));
+  // Build union of all slot times across working trainers
+  const allSlotTimes = new Set<string>();
+  trainers.forEach((trainer: any) => {
+    const todayHours = trainer.trainer_working_hours?.find(
+      (wh: any) => wh.day_of_week === targetDow && wh.is_working_day
+    );
+    if (!todayHours) return;
+    const [sh, sm] = todayHours.start_time.split(":").map(Number);
+    const [eh, em] = todayHours.end_time.split(":").map(Number);
+    let cur = sh * 60 + sm;
+    const end = eh * 60 + em;
+    while (cur + slotDuration <= end) {
+      const h = Math.floor(cur / 60);
+      const m = cur % 60;
+      allSlotTimes.add(`${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`);
+      cur += slotDuration;
+    }
+  });
+  const slots = Array.from(allSlotTimes).sort();
 
-  const todayTotal = sessions.length;
-  const todayCompleted = sessions.filter(s => s.status === "completed").length;
-  const todayUpcoming = sessions.filter(s => s.status === "scheduled").length;
+  // Build gridData with clientDetails (enriched for interactivity)
+  const gridData = trainers.map((trainer: any) => {
+    const isOnLeave = leaveTodayIds.has(trainer.id);
+    const todayHours = trainer.trainer_working_hours?.find(
+      (wh: any) => wh.day_of_week === targetDow && wh.is_working_day
+    );
 
-  // Today's day-of-week in IST (0=Sun … 6=Sat)
-  const todayDow = new Date(today + "T00:00:00").getDay();
+    const trainerSlots = slots.map((slotTime: string) => {
+      const slotHour = parseInt(slotTime.split(":")[0]);
 
-  // Available PT Capacity: for each working trainer not on leave today,
-  // sum (max_clients_per_slot – active assigned clients for today's DOW)
-  const availableSlots = active.reduce((sum: number, trainer: any) => {
-    if (leaveIds.has(trainer.id)) return sum;
-    const wh = (trainer.trainer_working_hours ?? []).find((w: any) => w.day_of_week === todayDow);
-    if (!wh || !wh.is_working_day) return sum;
-    const occupied = assignments.filter((a: any) => {
-      if (a.trainer_id !== trainer.id) return false;
-      const d = a.days_of_week as number[];
-      return !d || d.length === 0 || d.includes(todayDow);
-    }).length;
-    return sum + Math.max(0, (trainer.max_clients_per_slot || 0) - occupied);
-  }, 0);
-
-  // Capacity by hour: for each hour (6–21), occupied vs total across working trainers
-  const capacityByHour: CapacityHour[] = Array.from({ length: 17 }, (_, i) => i + 6).map(h => {
-    let occupied = 0, total = 0;
-    active.forEach((trainer: any) => {
-      if (leaveIds.has(trainer.id)) return;
-      const wh = (trainer.trainer_working_hours ?? []).find((w: any) => w.day_of_week === todayDow);
-      if (!wh || !wh.is_working_day) return;
-      const [sh] = wh.start_time.split(":").map(Number);
-      const [eh] = wh.end_time.split(":").map(Number);
-      if (h >= sh && h < eh) {
-        total += trainer.max_clients_per_slot || 0;
-        occupied += assignments.filter((a: any) => {
-          if (a.trainer_id !== trainer.id) return false;
-          const d = a.days_of_week as number[];
-          const dayMatch = !d || d.length === 0 || d.includes(todayDow);
-          if (!dayMatch) return false;
-          const [ah] = (a.preferred_time ?? "").split(":").map(Number);
-          return ah === h;
-        }).length;
+      if (!todayHours) {
+        return {
+          time: slotTime,
+          current: 0,
+          max: trainer.max_clients_per_slot,
+          isWorking: false,
+          isBlocked: false,
+          clients: [],
+          clientDetails: [],
+        };
       }
-    });
-    return { hour: h, occupied, total };
-  }).filter(h => h.total > 0);
 
+      const [sh] = todayHours.start_time.split(":").map(Number);
+      const [eh] = todayHours.end_time.split(":").map(Number);
+      const isWorking = slotHour >= sh && slotHour < eh;
+
+      const isBlocked =
+        (blockedRaw as any[])?.some(
+          (b: any) =>
+            b.trainer_id === trainer.id &&
+            b.start_time <= slotTime &&
+            b.end_time > slotTime
+        ) ?? false;
+
+      // Sessions: exact time match
+      const sessionMatches = sessions.filter(
+        (s: any) =>
+          s.trainer_id === trainer.id &&
+          s.start_time === slotTime + ":00"
+      );
+
+      // Assignments: fix empty days_of_week bug — empty = all days
+      const assignmentMatches = assignments.filter((a: any) => {
+        if (a.trainer_id !== trainer.id) return false;
+        const d = a.days_of_week as number[];
+        const dayMatch = !d || d.length === 0 || d.includes(targetDow);
+        if (!dayMatch) return false;
+        return parseInt((a.preferred_time as string).split(":")[0]) === slotHour;
+      });
+
+      const sessionClientDetails = sessionMatches.map((s: any) => ({
+        id: s.pt_clients?.id ?? s.client_id,
+        first_name: s.pt_clients?.first_name ?? "",
+        last_name: s.pt_clients?.last_name ?? "",
+        profile_picture_url: s.pt_clients?.profile_picture_url ?? null,
+        assignment_id: undefined,
+        preferred_time: slotTime,
+      }));
+
+      const assignmentClientDetails = assignmentMatches.map((a: any) => ({
+        id: a.pt_clients?.id ?? a.client_id,
+        first_name: a.pt_clients?.first_name ?? "",
+        last_name: a.pt_clients?.last_name ?? "",
+        profile_picture_url: a.pt_clients?.profile_picture_url ?? null,
+        assignment_id: a.id,
+        preferred_time: a.preferred_time,
+        days_of_week: a.days_of_week,
+      }));
+
+      const clientDetails =
+        sessionMatches.length > 0 ? sessionClientDetails : assignmentClientDetails;
+      const clients = clientDetails.map((c: any) => c.first_name).filter(Boolean);
+
+      return {
+        time: slotTime,
+        current: clients.length,
+        max: trainer.max_clients_per_slot,
+        isWorking,
+        isBlocked,
+        clients,
+        clientDetails,
+      };
+    });
+
+    return {
+      trainer: {
+        id: trainer.id,
+        first_name: trainer.first_name,
+        last_name: trainer.last_name,
+        profile_picture_url: trainer.profile_picture_url,
+        max_clients_per_slot: trainer.max_clients_per_slot,
+        status: trainer.status,
+      },
+      isOnLeave,
+      slots: trainerSlots,
+    };
+  });
+
+  // Compute KPIs from gridData
+  let totalSlots = 0, filledSlots = 0, freeSlots = 0;
+  gridData.forEach((row: any) => {
+    if (!row.isOnLeave) {
+      row.slots.forEach((s: any) => {
+        if (s.isWorking && !s.isBlocked) {
+          totalSlots++;
+          if (s.current > 0) filledSlots++;
+          else freeSlots++;
+        }
+      });
+    }
+  });
+
+  const kpis = {
+    activeTrainers: trainers.length,
+    workingToday: gridData.filter(
+      (row: any) => !row.isOnLeave && row.slots.some((s: any) => s.isWorking)
+    ).length,
+    totalSlots,
+    filledSlots,
+    freeSlots,
+    onLeave: gridData.filter((row: any) => row.isOnLeave).length,
+  };
+
+  // Alerts
   const alerts: { text: string; severity: "high" | "medium" }[] = [];
-  active.forEach((t: any) => {
-    if (leaveIds.has(t.id) && alerts.length < 2) {
-      const affected = sessions.filter(s => s.trainer_id === t.id).length;
+  gridData.forEach((row: any) => {
+    if (row.isOnLeave && alerts.length < 2) {
+      const affected = sessions.filter((s: any) => s.trainer_id === row.trainer.id).length;
       if (affected > 0) {
         alerts.push({
-          text: `${t.first_name} ${t.last_name} on leave today — ${affected} session${affected > 1 ? "s" : ""} affected`,
+          text: `${row.trainer.first_name} ${row.trainer.last_name} on leave today — ${affected} session${affected > 1 ? "s" : ""} affected`,
           severity: "high",
         });
       }
@@ -122,23 +259,30 @@ export default async function ManagerDashboard() {
     });
   }
 
-  const now = new Date();
-  const weekday = now.toLocaleDateString("en-IN", { weekday: "long", timeZone: "Asia/Kolkata" });
-  const datePart = now.toLocaleDateString("en-IN", { day: "numeric", month: "long", timeZone: "Asia/Kolkata" });
   const managerName = profile?.first_name ?? "";
   const gymName = gymData?.name ?? "Iron Kingdom";
   const gymBranch = gymData?.branch_name ?? null;
+  const displayDate = new Date(targetDate + "T00:00:00");
+  const weekday = displayDate.toLocaleDateString("en-IN", {
+    weekday: "long",
+    timeZone: "Asia/Kolkata",
+  });
+  const datePart = displayDate.toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "long",
+    timeZone: "Asia/Kolkata",
+  });
 
   return (
     <div>
-      <div className="px-6 md:px-8 pt-6 pb-5 border-b border-[#2E3129] bg-[#1A1C18]">
-        <div className="flex items-end justify-between">
+      {/* Compact header */}
+      <div className="px-6 md:px-8 pt-5 pb-4 border-b border-[#2E3129] bg-[#1A1C18]">
+        <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-xl md:text-2xl font-semibold text-[#E8EBE4] leading-tight">
+            <h1 className="text-xl font-semibold text-[#E8EBE4] leading-tight">
               {getGreeting()}{managerName ? `, ${managerName}` : ""}.
             </h1>
-            <p className="text-[13px] text-[#6B6E67] mt-1">Here&apos;s your PT operation for today.</p>
-            <div className="flex items-center gap-1.5 mt-2 text-[11px] text-[#6B6E67] font-medium">
+            <div className="flex items-center gap-1.5 mt-1 text-[11px] text-[#6B6E67] font-medium">
               <span>{weekday}, {datePart}</span>
               <span className="text-[#2E3129]">·</span>
               <span className="uppercase tracking-wide">{gymName}</span>
@@ -156,107 +300,18 @@ export default async function ManagerDashboard() {
         </div>
       </div>
 
-      <div className="px-8 py-6 space-y-5">
-        {/* Primary CTAs */}
-        <div className="grid grid-cols-2 gap-4">
-          <Link
-            href="/manager/trainers/new"
-            className="group flex items-center gap-4 bg-[#B9E84A] rounded-2xl px-5 py-4 hover:bg-[#A8D63A] transition-colors"
-          >
-            <div className="w-10 h-10 rounded-xl bg-[#171917]/15 flex items-center justify-center flex-shrink-0">
-              <UserPlus size={18} className="text-[#171917]" />
-            </div>
-            <div>
-              <div className="text-sm font-bold text-[#171917]">Add Trainer</div>
-              <div className="text-[11px] text-[#171917]/60 mt-0.5">Onboard a new PT trainer</div>
-            </div>
-            <Plus size={16} className="ml-auto text-[#171917]/50 group-hover:text-[#171917] transition-colors" />
-          </Link>
-          <Link
-            href="/manager/clients/new"
-            className="group flex items-center gap-4 bg-[#222520] border border-[#B9E84A]/40 rounded-2xl px-5 py-4 hover:border-[#B9E84A] hover:bg-[#1E2020] transition-colors"
-          >
-            <div className="w-10 h-10 rounded-xl bg-[#B9E84A]/15 flex items-center justify-center flex-shrink-0">
-              <Users size={18} className="text-[#B9E84A]" />
-            </div>
-            <div>
-              <div className="text-sm font-bold text-[#E8EBE4]">Add PT Client</div>
-              <div className="text-[11px] text-[#6B6E67] mt-0.5">Register a new PT member</div>
-            </div>
-            <Plus size={16} className="ml-auto text-[#6B6E67] group-hover:text-[#B9E84A] transition-colors" />
-          </Link>
-        </div>
-
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <KpiCard label="Total Trainers" value={active.length} />
-          <KpiCard label="Active PT Clients" value={clientsRaw?.length ?? 0} />
-          <KpiCard label="Today's Sessions" value={todayTotal} />
-          <KpiCard label="Available PT Capacity" value={availableSlots} accent />
-        </div>
-
-        <div className="bg-[#222520] border border-[#2E3129] rounded-2xl p-5">
-          <h2 className="text-sm font-semibold text-[#E8EBE4]">PT Capacity by Hour</h2>
-          <p className="text-xs text-[#6B6E67] mt-0.5 mb-5">Occupied vs total capacity per hour today</p>
-          <PeakHoursChart data={capacityByHour} />
-        </div>
-
-        <div className="bg-[#222520] border border-[#2E3129] rounded-2xl p-5">
-          <h2 className="text-sm font-semibold text-[#E8EBE4] mb-4">Today&apos;s Snapshot</h2>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-6">
-            <div>
-              <div className="text-2xl font-bold text-[#E8EBE4] tabular-nums">{todayTotal}</div>
-              <div className="text-xs text-[#6B6E67] mt-0.5">Total Sessions</div>
-            </div>
-            <div>
-              <div className="text-2xl font-bold text-[#B9E84A] tabular-nums">{todayCompleted}</div>
-              <div className="text-xs text-[#6B6E67] mt-0.5">Completed</div>
-            </div>
-            <div>
-              <div className="text-2xl font-bold text-[#E8EBE4] tabular-nums">{todayUpcoming}</div>
-              <div className="text-xs text-[#6B6E67] mt-0.5">Upcoming</div>
-            </div>
-            <div>
-              <div className="text-2xl font-bold text-[#E8EBE4] tabular-nums">{availableSlots}</div>
-              <div className="text-xs text-[#6B6E67] mt-0.5">Available Capacity</div>
-            </div>
-          </div>
-        </div>
-
-        <div>
-          <div className="text-[10px] font-semibold text-[#6B6E67] tracking-widest uppercase mb-3">Quick Actions</div>
-          <div className="flex flex-wrap gap-2">
-            <Link href="/manager/trainers/new" className="inline-flex items-center gap-1.5 h-9 px-4 bg-[#B9E84A] text-[#171917] text-xs font-semibold rounded-lg hover:bg-[#A8D63A] transition-colors">
-              <Plus size={13} /> Add Trainer
-            </Link>
-            <Link href="/manager/clients/new" className="inline-flex items-center gap-1.5 h-9 px-4 bg-[#222520] border border-[#2E3129] text-[#E8EBE4] text-xs font-medium rounded-lg hover:bg-[#1A1C18] transition-colors">
-              <Plus size={13} /> Add PT Client
-            </Link>
-            <Link href="/manager/assignments" className="inline-flex items-center gap-1.5 h-9 px-4 bg-[#222520] border border-[#2E3129] text-[#E8EBE4] text-xs font-medium rounded-lg hover:bg-[#1A1C18] transition-colors">
-              <Link2 size={13} /> Assign Client
-            </Link>
-            <Link href="/manager/schedule" className="inline-flex items-center gap-1.5 h-9 px-4 bg-[#222520] border border-[#2E3129] text-[#E8EBE4] text-xs font-medium rounded-lg hover:bg-[#1A1C18] transition-colors">
-              <CalendarDays size={13} /> View Schedule
-            </Link>
-          </div>
-        </div>
-
-        {alerts.length > 0 && (
-          <div className="space-y-2">
-            {alerts.map((item, i) => (
-              <div
-                key={i}
-                className={`flex items-start gap-2.5 px-4 py-3 rounded-xl border text-xs ${
-                  item.severity === "high"
-                    ? "bg-red-500/10 border-red-500/30 text-red-400"
-                    : "bg-orange-500/10 border-orange-500/30 text-orange-400"
-                }`}
-              >
-                <AlertTriangle size={13} className="mt-0.5 flex-shrink-0" />
-                <span>{item.text}</span>
-              </div>
-            ))}
-          </div>
-        )}
+      {/* Dashboard content */}
+      <div className="px-6 md:px-8 py-5">
+        <DashboardContent
+          date={targetDate}
+          slots={slots}
+          gridData={gridData as any}
+          kpis={kpis}
+          clients={(clientsRaw as any[]) ?? []}
+          gymId={gymId}
+          userId={user.id}
+          alerts={alerts}
+        />
       </div>
     </div>
   );

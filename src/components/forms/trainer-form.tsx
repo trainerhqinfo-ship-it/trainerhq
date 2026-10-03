@@ -7,9 +7,17 @@ import { Input, Select, Textarea } from "@/components/ui/input";
 import { SPECIALIZATIONS, DAY_NAMES_FULL } from "@/lib/utils";
 import type { Trainer } from "@/types/database";
 
+interface WorkingHourProp {
+  day_of_week: number;
+  is_working_day: boolean;
+  start_time: string;
+  end_time: string;
+}
+
 interface TrainerFormProps {
   trainer?: Trainer;
   gymId?: string;
+  initialWorkingHours?: WorkingHourProp[];
 }
 
 const DEFAULT_WORKING_HOURS = [0, 1, 2, 3, 4, 5, 6].map(d => ({
@@ -19,7 +27,7 @@ const DEFAULT_WORKING_HOURS = [0, 1, 2, 3, 4, 5, 6].map(d => ({
   end_time: "22:00",
 }));
 
-export function TrainerForm({ trainer, gymId }: TrainerFormProps) {
+export function TrainerForm({ trainer, gymId, initialWorkingHours }: TrainerFormProps) {
   const router = useRouter();
   const isEdit = !!trainer;
   const [loading, setLoading] = useState(false);
@@ -42,7 +50,14 @@ export function TrainerForm({ trainer, gymId }: TrainerFormProps) {
     max_clients_per_slot: trainer?.max_clients_per_slot?.toString() ?? "2",
     commission_type: "percentage",
     commission_value: "40",
-    working_hours: DEFAULT_WORKING_HOURS,
+    working_hours: initialWorkingHours?.length === 7
+      ? initialWorkingHours.map(wh => ({
+          day_of_week: wh.day_of_week,
+          is_working_day: wh.is_working_day,
+          start_time: wh.start_time,
+          end_time: wh.end_time,
+        }))
+      : DEFAULT_WORKING_HOURS,
   });
 
   function toggle(field: "specializations", value: string) {
@@ -92,6 +107,19 @@ export function TrainerForm({ trainer, gymId }: TrainerFormProps) {
           updated_at: new Date().toISOString(),
         }).eq("id", trainer.id);
         if (err) throw err;
+
+        // Upsert working hours — update each row by trainer_id + day_of_week
+        await Promise.all(formData.working_hours.map(wh =>
+          supabase.from("trainer_working_hours")
+            .update({
+              is_working_day: wh.is_working_day,
+              start_time: wh.start_time,
+              end_time: wh.end_time,
+            })
+            .eq("trainer_id", trainer.id)
+            .eq("day_of_week", wh.day_of_week)
+        ));
+
         router.push(`/manager/trainers/${trainer.id}`);
       } else {
         const { data: newTrainer, error: err } = await supabase.from("trainers").insert({

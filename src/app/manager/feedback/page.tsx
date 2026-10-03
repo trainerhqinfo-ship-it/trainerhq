@@ -17,7 +17,8 @@ export default async function FeedbackPage() {
     supabase.from("trainer_feedback")
       .select("*, trainers(first_name, last_name), pt_clients(first_name, last_name)")
       .eq("gym_id", gymId)
-      .order("created_at", { ascending: false }),
+      .order("created_at", { ascending: false })
+      .limit(100),
     supabase.from("trainers").select("id, first_name, last_name").eq("gym_id", gymId),
   ]);
 
@@ -111,8 +112,9 @@ export default async function FeedbackPage() {
 
         {/* All feedback */}
         <div className="bg-[#222520] border border-[#2E3129] rounded-2xl overflow-hidden">
-          <div className="px-5 py-4 border-b border-[#2E3129]">
+          <div className="px-5 py-4 border-b border-[#2E3129] flex items-center justify-between">
             <h3 className="text-sm font-semibold text-[#E8EBE4]">All Feedback</h3>
+            <span className="text-[10px] text-[#6B6E67]">Showing the 100 most recent entries</span>
           </div>
           <div className="divide-y divide-[#1A1C18]">
             {feedback.map((f: any) => {

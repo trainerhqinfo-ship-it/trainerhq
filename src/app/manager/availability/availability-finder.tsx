@@ -78,7 +78,6 @@ function capacityBadgeClass(used: number, max: number): string {
 
 export function AvailabilityFinder({ trainers, workingHours, assignments, leaves = [] }: Props) {
   const todayDow = new Date().getDay();
-  const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
   const nowH = new Date().getHours();
   const defaultHour = Math.min(Math.max(nowH, 5), 22);
 
@@ -86,13 +85,23 @@ export function AvailabilityFinder({ trainers, workingHours, assignments, leaves
   const [selectedHour, setSelectedHour] = useState(defaultHour);
   const [searched, setSearched] = useState(false);
 
-  const todayLeaveIds = useMemo(() => {
+  // Compute the actual calendar date for the selected day-of-week (next occurrence).
+  const searchDate = useMemo(() => {
+    const today = new Date();
+    const diff = (selectedDay - today.getDay() + 7) % 7;
+    const d = new Date(today);
+    d.setDate(today.getDate() + diff);
+    return d.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+  }, [selectedDay]);
+
+  // Trainers on approved leave on the searched date.
+  const leaveIds = useMemo(() => {
     const ids = new Set<string>();
     leaves.forEach(l => {
-      if (l.start_date <= todayStr && l.end_date >= todayStr) ids.add(l.trainer_id);
+      if (l.start_date <= searchDate && l.end_date >= searchDate) ids.add(l.trainer_id);
     });
     return ids;
-  }, [leaves, todayStr]);
+  }, [leaves, searchDate]);
 
   const results = useMemo(() => {
     if (!searched) return null;
@@ -100,8 +109,7 @@ export function AvailabilityFinder({ trainers, workingHours, assignments, leaves
     return trainers.map(trainer => {
       const max = trainer.max_clients_per_slot ?? 1;
 
-      // Show leave only when searching for today's day-of-week
-      if (selectedDay === todayDow && todayLeaveIds.has(trainer.id)) {
+      if (leaveIds.has(trainer.id)) {
         return { trainer, status: "leave" as TrainerStatus, daySlots: [], used: 0, max, open: max };
       }
 
@@ -155,7 +163,7 @@ export function AvailabilityFinder({ trainers, workingHours, assignments, leaves
 
       return { trainer, status, daySlots, used, max, open };
     });
-  }, [searched, selectedDay, selectedHour, trainers, workingHours, assignments, todayDow, todayLeaveIds]);
+  }, [searched, selectedDay, selectedHour, trainers, workingHours, assignments, leaveIds]);
 
   // Trainers with any open capacity, sorted by most open first
   const hasCapacity = [...(results?.filter(r => r.status === "available" || r.status === "partial") ?? [])]

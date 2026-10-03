@@ -37,7 +37,7 @@ export default async function SessionsPage({
 
   return (
     <div>
-      <Header title="Sessions" subtitle={`${sessions.length} sessions`} />
+      <Header title="Sessions" subtitle={`${sessions.length} sessions${sessions.length === 100 ? " (showing latest 100)" : ""}`} />
 
       <div className="px-8 py-6 space-y-4">
         {/* Filter tabs */}

@@ -199,19 +199,30 @@ export function AssignmentForm({ trainers, clients, preselectedClientId }: Assig
       }
     }
 
-    // Server-side capacity double-check
+    // Server-side capacity double-check — respects days_of_week overlap
     const timeHour = parseInt(formData.preferred_time.split(":")[0]);
-    const { count } = await supabase
+    const { data: existingAtTime } = await supabase
       .from("pt_assignments")
-      .select("id", { count: "exact", head: true })
+      .select("id, days_of_week")
       .eq("trainer_id", formData.trainer_id)
+      .eq("gym_id", gymId)
       .eq("status", "active")
-      .filter("preferred_time", "gte", `${String(timeHour).padStart(2,"0")}:00`)
-      .filter("preferred_time", "lt", `${String(timeHour+1).padStart(2,"0")}:00`);
+      .filter("preferred_time", "gte", `${String(timeHour).padStart(2, "0")}:00`)
+      .filter("preferred_time", "lt", `${String(timeHour + 1).padStart(2, "0")}:00`);
+
+    // Count only assignments whose days overlap with the new assignment's days.
+    // days_of_week = [] means all days — treat it as overlapping with anything.
+    const newDays = formData.days_of_week;
+    const overlappingCount = (existingAtTime ?? []).filter((a: any) => {
+      const aDays = a.days_of_week as number[] | null;
+      if (!aDays || aDays.length === 0) return true;
+      if (newDays.length === 0) return true;
+      return newDays.some((d: number) => aDays.includes(d));
+    }).length;
 
     const trainerObj = trainers.find(t => t.id === formData.trainer_id);
-    if (trainerObj && (count ?? 0) >= trainerObj.max_clients_per_slot) {
-      setError(`${trainerObj.first_name} is at full capacity (${count}/${trainerObj.max_clients_per_slot}) — assignment blocked.`);
+    if (trainerObj && overlappingCount >= trainerObj.max_clients_per_slot) {
+      setError(`${trainerObj.first_name} is at full capacity (${overlappingCount}/${trainerObj.max_clients_per_slot}) — assignment blocked.`);
       setLoading(false);
       return;
     }

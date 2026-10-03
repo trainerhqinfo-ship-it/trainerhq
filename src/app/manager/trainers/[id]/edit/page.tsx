@@ -14,8 +14,10 @@ export default async function EditTrainerPage({ params }: { params: Promise<{ id
   const gymId = profile?.gym_id;
   if (!gymId) redirect("/login");
 
-  const { data: trainer } = await supabase.from("trainers")
-    .select("*").eq("id", id).eq("gym_id", gymId).single();
+  const [{ data: trainer }, { data: workingHoursRaw }] = await Promise.all([
+    supabase.from("trainers").select("*").eq("id", id).eq("gym_id", gymId).single(),
+    supabase.from("trainer_working_hours").select("*").eq("trainer_id", id).order("day_of_week"),
+  ]);
 
   if (!trainer) notFound();
 
@@ -23,7 +25,7 @@ export default async function EditTrainerPage({ params }: { params: Promise<{ id
     <div>
       <Header title="Edit Trainer" subtitle={`${trainer.first_name} ${trainer.last_name}`} />
       <div className="px-8 py-6 max-w-4xl">
-        <TrainerForm trainer={trainer} />
+        <TrainerForm trainer={trainer} initialWorkingHours={workingHoursRaw ?? undefined} />
       </div>
     </div>
   );

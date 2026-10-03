@@ -13,10 +13,15 @@ export default async function ManagerClientsPage() {
   const gymId = profile?.gym_id;
   if (!gymId) redirect("/login");
 
-  const [{ data: clientsRaw }, { data: assignmentsRaw }] = await Promise.all([
+  const [
+    { data: clientsRaw },
+    { data: assignmentsRaw },
+    { data: packagesRaw },
+    { data: completedSessionsRaw },
+  ] = await Promise.all([
     supabase
       .from("pt_clients")
-      .select("id, first_name, last_name, email, phone, status, goal")
+      .select("id, first_name, last_name, email, phone, status, goal, joining_date")
       .eq("gym_id", gymId)
       .order("first_name"),
     supabase
@@ -24,12 +29,37 @@ export default async function ManagerClientsPage() {
       .select("client_id, trainers(first_name, last_name)")
       .eq("gym_id", gymId)
       .eq("status", "active"),
+    supabase
+      .from("pt_packages")
+      .select("client_id, package_name, total_sessions, amount_collected, package_value, end_date")
+      .eq("gym_id", gymId)
+      .eq("is_active", true),
+    supabase
+      .from("pt_sessions")
+      .select("client_id")
+      .eq("gym_id", gymId)
+      .eq("status", "completed"),
   ]);
 
   const clients = clientsRaw ?? [];
   const assignments = assignmentsRaw ?? [];
-  const activeCount = clients.filter(c => c.status === "active").length;
-  const inactiveCount = clients.filter(c => c.status !== "active").length;
+
+  const packageByClient: Record<string, any> = {};
+  (packagesRaw ?? []).forEach((p: any) => { packageByClient[p.client_id] = p; });
+
+  const completedByClient: Record<string, number> = {};
+  (completedSessionsRaw ?? []).forEach((s: any) => {
+    completedByClient[s.client_id] = (completedByClient[s.client_id] ?? 0) + 1;
+  });
+
+  const enrichedClients = clients.map((c: any) => ({
+    ...c,
+    pkg: packageByClient[c.id] ?? null,
+    sessionsCompleted: completedByClient[c.id] ?? 0,
+  }));
+
+  const activeCount = clients.filter((c: any) => c.status === "active").length;
+  const inactiveCount = clients.filter((c: any) => c.status !== "active").length;
 
   return (
     <div>
@@ -47,7 +77,7 @@ export default async function ManagerClientsPage() {
         }
       />
       <div className="px-8 py-6">
-        <ClientsTable clients={clients as any} assignments={assignments as any} />
+        <ClientsTable clients={enrichedClients as any} assignments={assignments as any} />
       </div>
     </div>
   );

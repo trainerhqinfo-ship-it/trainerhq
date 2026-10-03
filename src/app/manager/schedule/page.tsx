@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { createClient, getSessionUser } from "@/lib/supabase/server";
 import { Header } from "@/components/layout/header";
-import { ScheduleGrid } from "@/components/schedule/schedule-grid";
+import { ScheduleContent } from "./schedule-content";
 
 export default async function SchedulePage({
   searchParams,
@@ -27,14 +27,15 @@ export default async function SchedulePage({
     { data: leaves },
     { data: blocked },
     { data: gym },
+    { data: clientsRaw },
   ] = await Promise.all([
     supabase.from("trainers").select("*, trainer_working_hours(*)").eq("gym_id", gymId).eq("status", "active"),
     supabase.from("pt_sessions")
-      .select("*, pt_clients(first_name, last_name)")
+      .select("*, pt_clients(id, first_name, last_name)")
       .eq("gym_id", gymId)
       .eq("session_date", targetDate),
     supabase.from("pt_assignments")
-      .select("*, pt_clients(first_name, last_name)")
+      .select("*, pt_clients(id, first_name, last_name, profile_picture_url)")
       .eq("gym_id", gymId)
       .eq("status", "active"),
     supabase.from("trainer_leaves")
@@ -47,6 +48,11 @@ export default async function SchedulePage({
       .eq("gym_id", gymId)
       .eq("blocked_date", targetDate),
     supabase.from("gyms").select("default_slot_duration").eq("id", gymId).single(),
+    supabase.from("pt_clients")
+      .select("id, first_name, last_name, phone, profile_picture_url, status")
+      .eq("gym_id", gymId)
+      .eq("status", "active")
+      .order("first_name"),
   ]);
 
   const trainers = trainersRaw as any[] | null;
@@ -84,23 +90,77 @@ export default async function SchedulePage({
 
     const trainerSlots = slots.map((slotTime: string) => {
       const slotHour = parseInt(slotTime.split(":")[0]);
-      if (!todayHours) return { time: slotTime, current: 0, max: trainer.max_clients_per_slot, isWorking: false, clients: [], isBlocked: false };
+
+      if (!todayHours) {
+        return {
+          time: slotTime,
+          current: 0,
+          max: trainer.max_clients_per_slot,
+          isWorking: false,
+          isBlocked: false,
+          clients: [],
+          clientDetails: [],
+        };
+      }
+
       const [sh] = todayHours.start_time.split(":").map(Number);
       const [eh] = todayHours.end_time.split(":").map(Number);
       const isWorking = slotHour >= sh && slotHour < eh;
-      const isBlocked = (blocked as any[])?.some(
-        (b: any) => b.trainer_id === trainer.id && b.start_time <= slotTime && b.end_time > slotTime
-      ) ?? false;
-      const sessionClients = sessions?.filter(
+
+      const isBlocked =
+        (blocked as any[])?.some(
+          (b: any) =>
+            b.trainer_id === trainer.id &&
+            b.start_time <= slotTime &&
+            b.end_time > slotTime
+        ) ?? false;
+
+      // Sessions: exact time match
+      const sessionMatches = sessions?.filter(
         (s: any) => s.trainer_id === trainer.id && s.start_time === slotTime + ":00"
-      ).map((s: any) => `${s.pt_clients?.first_name || ""}`) ?? [];
-      const assignmentClients = assignments?.filter(
-        (a: any) => a.trainer_id === trainer.id &&
-          a.days_of_week?.includes(targetDow) &&
-          parseInt((a.preferred_time as string).split(":")[0]) === slotHour
-      ).map((a: any) => `${a.pt_clients?.first_name || ""}`) ?? [];
-      const clients = sessionClients.length > 0 ? sessionClients : assignmentClients;
-      return { time: slotTime, current: clients.length, max: trainer.max_clients_per_slot, isWorking, isBlocked, clients };
+      ) ?? [];
+
+      // Assignments: empty days_of_week = all days
+      const assignmentMatches = assignments?.filter((a: any) => {
+        if (a.trainer_id !== trainer.id) return false;
+        const d = a.days_of_week as number[];
+        const dayMatch = !d || d.length === 0 || d.includes(targetDow);
+        if (!dayMatch) return false;
+        return parseInt((a.preferred_time as string).split(":")[0]) === slotHour;
+      }) ?? [];
+
+      const sessionClientDetails = sessionMatches.map((s: any) => ({
+        id: s.pt_clients?.id ?? s.client_id,
+        first_name: s.pt_clients?.first_name ?? "",
+        last_name: s.pt_clients?.last_name ?? "",
+        profile_picture_url: s.pt_clients?.profile_picture_url ?? null,
+        assignment_id: undefined,
+        preferred_time: slotTime,
+      }));
+
+      const assignmentClientDetails = assignmentMatches.map((a: any) => ({
+        id: a.pt_clients?.id ?? a.client_id,
+        first_name: a.pt_clients?.first_name ?? "",
+        last_name: a.pt_clients?.last_name ?? "",
+        profile_picture_url: a.pt_clients?.profile_picture_url ?? null,
+        assignment_id: a.id,
+        preferred_time: a.preferred_time,
+        days_of_week: a.days_of_week,
+      }));
+
+      const clientDetails =
+        sessionMatches.length > 0 ? sessionClientDetails : assignmentClientDetails;
+      const clients = clientDetails.map((c: any) => c.first_name).filter(Boolean);
+
+      return {
+        time: slotTime,
+        current: clients.length,
+        max: trainer.max_clients_per_slot,
+        isWorking,
+        isBlocked,
+        clients,
+        clientDetails,
+      };
     });
 
     return {
@@ -121,10 +181,13 @@ export default async function SchedulePage({
     <div>
       <Header title="PT Schedule" subtitle="Trainer capacity by time slot" />
       <div className="px-8 py-6">
-        <ScheduleGrid
+        <ScheduleContent
           date={targetDate}
           slots={slots}
-          gridData={gridData}
+          gridData={gridData as any}
+          clients={(clientsRaw as any[]) ?? []}
+          gymId={gymId}
+          userId={user.id}
         />
       </div>
     </div>

@@ -28,6 +28,7 @@ const managerNavGroups: NavGroup[] = [
       { label: "Assignments", href: "/manager/assignments", icon: <Link2 size={14} /> },
       { label: "Availability",href: "/manager/availability",icon: <Clock size={14} /> },
       { label: "Sessions",    href: "/manager/sessions",    icon: <CheckSquare size={14} /> },
+      { label: "Attendance",  href: "/manager/attendance",  icon: <UserCheck size={14} /> },
       { label: "Payouts",     href: "/manager/payouts",     icon: <DollarSign size={14} /> },
     ],
   },

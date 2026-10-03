@@ -5,7 +5,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { StatusBadge } from "@/components/ui/badge";
 import { formatDate, formatTime, DAY_NAMES_FULL } from "@/lib/utils";
 import Link from "next/link";
-import { Edit, UserCheck, RefreshCw, Star } from "lucide-react";
+import { Edit, UserCheck, RefreshCw, Star, ExternalLink, FileText } from "lucide-react";
 
 export default async function ClientDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -26,18 +26,26 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
     { data: feedbackRaw },
   ] = await Promise.all([
     supabase.from("pt_clients").select("*").eq("id", id).eq("gym_id", gymId).single(),
-    supabase.from("pt_assignments").select("*, trainers(*)").eq("client_id", id).eq("status", "active").maybeSingle(),
-    supabase.from("pt_packages").select("*").eq("client_id", id).eq("is_active", true).maybeSingle(),
-    supabase.from("pt_sessions").select("*, trainers(first_name, last_name)").eq("client_id", id).order("session_date", { ascending: false }).limit(20),
-    supabase.from("trainer_feedback").select("*").eq("client_id", id).order("created_at", { ascending: false }).limit(5),
+    supabase.from("pt_assignments").select("*, trainers(*)").eq("client_id", id).eq("gym_id", gymId).eq("status", "active").maybeSingle(),
+    supabase.from("pt_packages").select("*").eq("client_id", id).eq("gym_id", gymId).eq("is_active", true).maybeSingle(),
+    supabase.from("pt_sessions").select("*, trainers(first_name, last_name)").eq("client_id", id).eq("gym_id", gymId).order("session_date", { ascending: false }).limit(20),
+    supabase.from("trainer_feedback").select("*").eq("client_id", id).eq("gym_id", gymId).order("created_at", { ascending: false }).limit(5),
   ]);
 
   if (!client) notFound();
 
+  let billSignedUrl: string | null = null;
+  if ((pkg as any)?.bill_url) {
+    const { data: signedData } = await supabase.storage
+      .from("pt-bills")
+      .createSignedUrl((pkg as any).bill_url, 60 * 60);
+    billSignedUrl = signedData?.signedUrl ?? null;
+  }
+
   const sessions = sessionsRaw ?? [];
   const feedback = feedbackRaw ?? [];
   const completed = sessions.filter((s: any) => s.status === "completed").length;
-  const remaining = pkg ? pkg.total_sessions - completed : (assignment as any)?.total_sessions ? Math.max(0, (assignment as any).total_sessions - completed) : null;
+  const remaining = pkg ? Math.max(0, pkg.total_sessions - completed) : (assignment as any)?.total_sessions ? Math.max(0, (assignment as any).total_sessions - completed) : null;
   const trainer = (assignment as any)?.trainers;
   const avgRating = feedback.length > 0
     ? (feedback.reduce((s: number, f: any) => s + (f.overall_rating ?? 0), 0) / feedback.length).toFixed(1)
@@ -139,25 +147,64 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
           {/* Package & Assignment */}
           <div className="space-y-4">
             {pkg && (
-              <div className="bg-[#222520] border border-[#2E3129] rounded-2xl p-5">
-                <div className="text-xs text-[#9B9E96] mb-1">PT Package</div>
-                <div className="font-semibold text-[#E8EBE4]">{pkg.package_name}</div>
-                <div className="mt-3">
+              <div className="bg-[#222520] border border-[#2E3129] rounded-2xl p-5 space-y-3">
+                <div>
+                  <div className="text-xs text-[#9B9E96] mb-0.5">PT Package</div>
+                  <div className="font-semibold text-[#E8EBE4]">{pkg.package_name ?? "—"}</div>
+                </div>
+
+                {/* Sessions progress */}
+                <div>
                   <div className="flex justify-between text-xs mb-1">
-                    <span className="text-[#9B9E96]">Progress</span>
+                    <span className="text-[#9B9E96]">Sessions</span>
                     <span className="font-medium text-[#E8EBE4]">{completed}/{pkg.total_sessions}</span>
                   </div>
                   <div className="h-2 bg-[#1A1C18] rounded-full overflow-hidden">
                     <div
                       className="h-full bg-[#B9E84A] rounded-full"
-                      style={{ width: `${Math.min(100, (completed / pkg.total_sessions) * 100)}%` }}
+                      style={{ width: `${pkg.total_sessions > 0 ? Math.min(100, (completed / pkg.total_sessions) * 100) : 0}%` }}
                     />
                   </div>
-                  <div className="text-[10px] text-[#9B9E96] mt-1">{remaining} sessions remaining</div>
+                  <div className="text-[10px] text-[#9B9E96] mt-1">{remaining} remaining</div>
                 </div>
-                {pkg.package_value && (
-                  <div className="mt-3 text-xs text-[#9B9E96]">
-                    Package value: <span className="text-[#E8EBE4] font-medium">₹{pkg.package_value.toLocaleString("en-IN")}</span>
+
+                {/* Financials */}
+                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-[#1A1C18]">
+                  {(pkg as any).package_value != null && (
+                    <div>
+                      <div className="text-[10px] text-[#9B9E96]">Package Value</div>
+                      <div className="text-sm font-medium text-[#E8EBE4]">₹{(pkg as any).package_value.toLocaleString("en-IN")}</div>
+                    </div>
+                  )}
+                  {(pkg as any).amount_collected != null && (
+                    <div>
+                      <div className="text-[10px] text-[#9B9E96]">Amount Collected</div>
+                      <div className="text-sm font-semibold text-[#B9E84A]">₹{(pkg as any).amount_collected.toLocaleString("en-IN")}</div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Invoice & Bill */}
+                {((pkg as any).invoice_number || billSignedUrl) && (
+                  <div className="space-y-1.5 pt-2 border-t border-[#1A1C18]">
+                    {(pkg as any).invoice_number && (
+                      <div className="flex items-center gap-1.5 text-xs text-[#9B9E96]">
+                        <span className="text-[#6B6E67]">Invoice:</span>
+                        <span className="font-medium text-[#E8EBE4]">{(pkg as any).invoice_number}</span>
+                      </div>
+                    )}
+                    {billSignedUrl && (
+                      <a
+                        href={billSignedUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 text-xs text-[#B9E84A] hover:underline"
+                      >
+                        <FileText size={11} />
+                        View Bill
+                        <ExternalLink size={10} />
+                      </a>
+                    )}
                   </div>
                 )}
               </div>
@@ -166,10 +213,13 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
             <div className="bg-[#222520] border border-[#2E3129] rounded-2xl p-5">
               <div className="text-xs text-[#9B9E96] mb-3">Assigned Trainer</div>
               {trainer ? (
-                <div className="flex items-center gap-2.5">
+                <Link
+                  href={`/manager/trainers/${(assignment as any).trainer_id}`}
+                  className="flex items-center gap-2.5 group"
+                >
                   <Avatar firstName={trainer.first_name} lastName={trainer.last_name} size="sm" />
-                  <div>
-                    <div className="text-sm font-medium text-[#E8EBE4]">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium text-[#E8EBE4] group-hover:text-[#B9E84A] transition-colors">
                       {trainer.first_name} {trainer.last_name}
                     </div>
                     <div className="text-xs text-[#9B9E96]">
@@ -177,12 +227,18 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
                       {(assignment as any)?.preferred_time ? ` · ${formatTime((assignment as any).preferred_time)}` : ""}
                     </div>
                   </div>
-                </div>
+                  <span className="text-[10px] text-[#B9E84A] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                    View →
+                  </span>
+                </Link>
               ) : (
-                <div className="text-xs text-[#9B9E96]">
-                  No trainer assigned.{" "}
-                  <Link href={`/manager/assignments/new?client=${id}`} className="text-[#E8EBE4] underline">
-                    Assign now
+                <div className="space-y-1">
+                  <div className="text-sm text-[#6B6E67]">Unassigned</div>
+                  <Link
+                    href={`/manager/assignments/new?client=${id}`}
+                    className="text-xs text-[#B9E84A] hover:underline"
+                  >
+                    Assign Trainer →
                   </Link>
                 </div>
               )}

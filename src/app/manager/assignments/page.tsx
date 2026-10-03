@@ -73,7 +73,9 @@ export default async function AssignmentsPage() {
                     </td>
                     <td className="px-5 py-3.5">
                       <div className="text-sm text-[#E8EBE4]">
-                        {a.days_of_week?.map((d: number) => DAY_NAMES_FULL[d].slice(0, 3)).join(", ")}
+                        {!a.days_of_week || a.days_of_week.length === 0
+                          ? "All days"
+                          : a.days_of_week.map((d: number) => DAY_NAMES_FULL[d].slice(0, 3)).join(", ")}
                       </div>
                       <div className="text-xs text-[#6B6E67]">{formatTime(a.preferred_time)}</div>
                     </td>

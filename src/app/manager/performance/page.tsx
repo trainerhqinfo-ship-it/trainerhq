@@ -19,6 +19,10 @@ export default async function PerformancePage() {
   const month = now.getMonth() + 1;
   const year = now.getFullYear();
 
+  const periodStart = `${year}-${String(month).padStart(2, "0")}-01`;
+  const lastDay = new Date(year, month, 0).getDate();
+  const periodEnd = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+
   const [
     { data: trainers },
     { data: sessions },
@@ -27,7 +31,12 @@ export default async function PerformancePage() {
     { data: payouts },
   ] = await Promise.all([
     supabase.from("trainers").select("*").eq("gym_id", gymId).eq("status", "active"),
-    supabase.from("pt_sessions").select("trainer_id, status, session_revenue").eq("gym_id", gymId),
+    supabase
+      .from("pt_sessions")
+      .select("trainer_id, status, session_revenue")
+      .eq("gym_id", gymId)
+      .gte("session_date", periodStart)
+      .lte("session_date", periodEnd),
     supabase.from("pt_assignments").select("trainer_id").eq("gym_id", gymId).eq("status", "active"),
     supabase.from("trainer_feedback").select("trainer_id, overall_rating").eq("gym_id", gymId),
     supabase.from("trainer_payouts").select("*").eq("gym_id", gymId).eq("period_month", month).eq("period_year", year),
@@ -56,7 +65,7 @@ export default async function PerformancePage() {
 
   return (
     <div>
-      <Header title="Trainer Performance" subtitle="Measurable metrics — no AI scores" />
+      <Header title="Trainer Performance" subtitle={`${now.toLocaleString("en-IN", { month: "long" })} ${year} · measurable metrics`} />
 
       <div className="px-8 py-6 space-y-5">
         {stats.map(({ trainer, completed, cancelled, noShow, scheduled, revenue, activeClients, maxCapacity, avgRating, payout, utilization }: any) => (
@@ -100,7 +109,7 @@ export default async function PerformancePage() {
 
             <div className="mt-4">
               <div className="flex justify-between text-xs text-[#6B6E67] mb-1">
-                <span>Session completion rate</span>
+                <span>Session completion rate (this month)</span>
                 <span>{utilization}%</span>
               </div>
               <div className="h-1.5 bg-[#222520] rounded-full overflow-hidden">

@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { recalculatePayoutForTrainer } from "@/app/manager/payouts/actions";
 
 interface Props {
   trainerId: string;
@@ -10,7 +11,20 @@ interface Props {
   commissionRuleId: string | null;
 }
 
-export function CommissionEditor({ trainerId, gymId, commissionType, commissionValue, commissionRuleId }: Props) {
+/** Returns YYYY-MM-DD for a date offset by `days` from today (IST). */
+function isoDateOffset(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+}
+
+export function CommissionEditor({
+  trainerId,
+  gymId,
+  commissionType,
+  commissionValue,
+  commissionRuleId,
+}: Props) {
   const [editing, setEditing] = useState(false);
   const [type, setType] = useState(commissionType ?? "fixed_per_session");
   const [value, setValue] = useState(String(commissionValue ?? ""));
@@ -19,104 +33,98 @@ export function CommissionEditor({ trainerId, gymId, commissionType, commissionV
 
   const displayText = commissionType
     ? commissionType === "percentage"
-      ? `${commissionValue}% of session revenue`
-      : `₹${(commissionValue ?? 0).toLocaleString("en-IN")}/client`
+      ? `${commissionValue}% of package value`
+      : `₹${(commissionValue ?? 0).toLocaleString("en-IN")}/package`
     : "Not set";
 
   const handleSave = async () => {
     const num = parseFloat(value);
-    if (isNaN(num) || num <= 0) { setError("Enter a valid amount"); return; }
+    if (isNaN(num) || num <= 0) {
+      setError("Enter a valid amount");
+      return;
+    }
     setSaving(true);
     setError("");
 
     const supabase = createClient();
-    const today = new Date().toISOString().split("T")[0];
+    const today = isoDateOffset(0);
+    const yesterday = isoDateOffset(-1);
     const now = new Date();
     const month = now.getMonth() + 1;
     const year = now.getFullYear();
 
-    // End current rule if one exists
-    if (commissionRuleId) {
-      await supabase
-        .from("trainer_commission_rules")
-        .update({ effective_to: today })
-        .eq("id", commissionRuleId);
-    }
-
-    // Also end any other open rules (handles the duplicate Chakri case)
-    await supabase
+    // Fetch all open rules for this trainer (effective_to IS NULL)
+    const { data: openRules } = await supabase
       .from("trainer_commission_rules")
-      .update({ effective_to: today })
+      .select("id, effective_from, commission_type, commission_value")
       .eq("trainer_id", trainerId)
+      .eq("gym_id", gymId)
       .is("effective_to", null);
 
-    // Insert new rule
-    const { error: insertErr } = await supabase.from("trainer_commission_rules").insert({
-      trainer_id: trainerId,
-      gym_id: gymId,
-      commission_type: type as "percentage" | "fixed_per_session",
-      commission_value: num,
-      effective_from: today,
-    });
+    const existingOpenRules = openRules ?? [];
 
-    if (insertErr) {
-      setError(insertErr.message);
-      setSaving(false);
-      return;
+    // Check if there is already an open rule starting TODAY (same-date case)
+    const sameDayRule = existingOpenRules.find((r: any) => r.effective_from === today);
+
+    if (sameDayRule) {
+      // Same-date replacement: UPDATE the existing rule rather than close+create.
+      // This avoids two competing rules for the same effective_from date.
+      const { error: updateErr } = await supabase
+        .from("trainer_commission_rules")
+        .update({
+          commission_type: type as "percentage" | "fixed_per_session",
+          commission_value: num,
+        })
+        .eq("id", sameDayRule.id);
+
+      if (updateErr) {
+        setError(updateErr.message);
+        setSaving(false);
+        return;
+      }
+
+      // Close any OTHER open rules that started before today (shouldn't exist, but clean up)
+      const olderRules = existingOpenRules.filter(
+        (r: any) => r.id !== sameDayRule.id && r.effective_from < today
+      );
+      for (const old of olderRules) {
+        await supabase
+          .from("trainer_commission_rules")
+          .update({ effective_to: yesterday })
+          .eq("id", old.id);
+      }
+    } else {
+      // Normal case: close all existing open rules with effective_to = yesterday
+      // (day before the new rule's effective_from = today).
+      // This ensures: old rule covers [effective_from … yesterday], new covers [today … open].
+      for (const old of existingOpenRules) {
+        const closeDate = old.effective_from < today ? yesterday : today;
+        await supabase
+          .from("trainer_commission_rules")
+          .update({ effective_to: closeDate })
+          .eq("id", old.id);
+      }
+
+      // Insert the new rule starting today
+      const { error: insertErr } = await supabase
+        .from("trainer_commission_rules")
+        .insert({
+          trainer_id: trainerId,
+          gym_id: gymId,
+          commission_type: type as "percentage" | "fixed_per_session",
+          commission_value: num,
+          effective_from: today,
+        });
+
+      if (insertErr) {
+        setError(insertErr.message);
+        setSaving(false);
+        return;
+      }
     }
 
-    // Regenerate current month payout
-    await supabase
-      .from("trainer_payouts")
-      .delete()
-      .eq("trainer_id", trainerId)
-      .eq("period_month", month)
-      .eq("period_year", year);
-
-    const nextMonth = month === 12 ? 1 : month + 1;
-    const nextYear = month === 12 ? year + 1 : year;
-    const periodStart = `${year}-${String(month).padStart(2, "0")}-01`;
-    const periodEnd = `${nextYear}-${String(nextMonth).padStart(2, "0")}-01`;
-
-    const [{ data: sessions }, { count: activeClients }] = await Promise.all([
-      supabase
-        .from("pt_sessions")
-        .select("session_revenue")
-        .eq("trainer_id", trainerId)
-        .eq("status", "completed")
-        .gte("session_date", periodStart)
-        .lt("session_date", periodEnd),
-      supabase
-        .from("pt_assignments")
-        .select("id", { count: "exact", head: true })
-        .eq("trainer_id", trainerId)
-        .eq("status", "active"),
-    ]);
-
-    const clientCount = activeClients ?? 0;
-    const eligible_revenue = (sessions ?? []).reduce((s: number, r: any) => s + (r.session_revenue ?? 0), 0);
-
-    // Only create a payout row if there's something to pay
-    if (clientCount > 0 || (type === "percentage" && eligible_revenue > 0)) {
-      const calculated_payout =
-        type === "percentage"
-          ? (eligible_revenue * num) / 100
-          : clientCount * num; // fixed per client × number of active clients
-
-      await supabase.from("trainer_payouts").insert({
-        gym_id: gymId,
-        trainer_id: trainerId,
-        period_month: month,
-        period_year: year,
-        completed_sessions: clientCount,       // stores client count for fixed; session count irrelevant
-        eligible_revenue: Math.round(eligible_revenue * 100) / 100,
-        commission_type: type,
-        commission_value: num,
-        calculated_payout: Math.round(calculated_payout * 100) / 100,
-        final_payout: Math.round(calculated_payout * 100) / 100,
-        status: "draft",
-      });
-    }
+    // Recalculate current month payout using the single authoritative calculation path
+    await recalculatePayoutForTrainer(trainerId, gymId, month, year);
 
     setSaving(false);
     window.location.reload();
@@ -145,11 +153,11 @@ export function CommissionEditor({ trainerId, gymId, commissionType, commissionV
       <div className="flex gap-2">
         <select
           value={type}
-          onChange={e => setType(e.target.value)}
+          onChange={(e) => setType(e.target.value)}
           className="flex-1 text-xs border border-[#2E3129] rounded-lg px-2 py-1.5 bg-[#222520] text-[#E8EBE4] focus:outline-none focus:border-[#B9E84A]"
         >
-          <option value="fixed_per_session">Fixed per client (₹)</option>
-          <option value="percentage">Percentage of session revenue (%)</option>
+          <option value="fixed_per_session">Fixed per package (₹)</option>
+          <option value="percentage">Percentage of package value (%)</option>
         </select>
         <div className="relative w-28">
           <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-[#9B9E96]">
@@ -158,8 +166,8 @@ export function CommissionEditor({ trainerId, gymId, commissionType, commissionV
           <input
             type="number"
             value={value}
-            onChange={e => setValue(e.target.value)}
-            placeholder={type === "percentage" ? "25" : "2500"}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder={type === "percentage" ? "25" : "1500"}
             min="1"
             className="w-full pl-6 pr-2 py-1.5 text-xs border border-[#2E3129] rounded-lg bg-[#222520] text-[#E8EBE4] focus:outline-none focus:border-[#B9E84A]"
           />
@@ -175,13 +183,20 @@ export function CommissionEditor({ trainerId, gymId, commissionType, commissionV
           {saving ? "Saving…" : "Save & Recalculate"}
         </button>
         <button
-          onClick={() => { setEditing(false); setError(""); setValue(String(commissionValue ?? "")); setType(commissionType ?? "fixed_per_session"); }}
+          onClick={() => {
+            setEditing(false);
+            setError("");
+            setValue(String(commissionValue ?? ""));
+            setType(commissionType ?? "fixed_per_session");
+          }}
           className="text-xs border border-[#2E3129] text-[#9B9E96] px-3 py-1.5 rounded-lg hover:bg-[#2E3129]"
         >
           Cancel
         </button>
       </div>
-      <p className="text-[10px] text-[#6B6E67]">Saves new commission rule and recalculates current month payout</p>
+      <p className="text-[10px] text-[#6B6E67]">
+        Existing rule closes yesterday · new rule starts today · payout recalculated
+      </p>
     </div>
   );
 }

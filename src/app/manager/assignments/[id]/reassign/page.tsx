@@ -43,15 +43,31 @@ export default function ReassignPage() {
 
       if (trainerList.length > 0) {
         const trainerIds = trainerList.map((t: any) => t.id);
-        const { data: activeAssignments } = await supabase
+
+        // Count capacity at this specific time slot, with days_of_week overlap
+        // (same logic as schedule grid — empty days_of_week means all days)
+        const slotHour = parseInt(((assignmentRaw as any).preferred_time ?? "00:00").split(":")[0]);
+        const movingDays: number[] =
+          (assignmentRaw as any).days_of_week?.length > 0
+            ? (assignmentRaw as any).days_of_week
+            : [0, 1, 2, 3, 4, 5, 6];
+
+        const { data: slotAssignments } = await supabase
           .from("pt_assignments")
-          .select("trainer_id")
+          .select("trainer_id, days_of_week")
           .in("trainer_id", trainerIds)
-          .eq("status", "active");
+          .eq("status", "active")
+          .filter("preferred_time", "like", `${String(slotHour).padStart(2, "0")}%`);
 
         const countMap: Record<string, number> = {};
-        (activeAssignments ?? []).forEach((a: any) => {
-          countMap[a.trainer_id] = (countMap[a.trainer_id] ?? 0) + 1;
+        (slotAssignments ?? []).forEach((a: any) => {
+          const aDays = a.days_of_week as number[] | null;
+          const overlaps = !aDays || aDays.length === 0
+            ? true
+            : movingDays.some((d: number) => aDays.includes(d));
+          if (overlaps) {
+            countMap[a.trainer_id] = (countMap[a.trainer_id] ?? 0) + 1;
+          }
         });
 
         const enriched = trainerList.map((t: any) => ({
@@ -80,8 +96,9 @@ export default function ReassignPage() {
     setSubmitting(true);
     const supabase = createClient();
     const today = new Date().toISOString().split("T")[0];
+    const { data: { user } } = await supabase.auth.getUser();
 
-    await supabase.from("pt_assignments").update({ end_date: today, status: "cancelled" }).eq("id", id);
+    await supabase.from("pt_assignments").update({ end_date: today, status: "inactive" as any }).eq("id", id);
 
     const { data: newAssign } = await supabase.from("pt_assignments").insert({
       gym_id: assignment.gym_id,
@@ -91,14 +108,17 @@ export default function ReassignPage() {
       preferred_time: assignment.preferred_time,
       total_sessions: assignment.total_sessions,
       start_date: today,
+      assigned_by: user?.id,
       status: "active",
     }).select().single();
 
     await supabase.from("audit_logs").insert({
       gym_id: assignment.gym_id,
+      user_id: user?.id,
       entity_type: "pt_assignment",
       entity_id: id,
-      action: "reassign",
+      action: "assignment_reassigned",
+      old_values: { trainer_id: assignment.trainer_id },
       new_values: { new_assignment_id: (newAssign as any)?.id, new_trainer_id: selectedTrainer, reason },
     });
 
@@ -134,7 +154,7 @@ export default function ReassignPage() {
 
         <form onSubmit={handleReassign} className="space-y-4">
           <div className="text-xs font-semibold text-[#9B9E96] uppercase tracking-wider">
-            Select New Trainer — only trainers with open slots are selectable
+            Select New Trainer — capacity shown at {formatTime(assignment.preferred_time ?? "")}
           </div>
 
           <div className="space-y-2">
@@ -172,7 +192,7 @@ export default function ReassignPage() {
                         ))}
                       </div>
                       <span className="text-xs text-[#9B9E96]">
-                        {t.currentClients}/{t.max_clients_per_slot} clients
+                        {t.currentClients}/{t.max_clients_per_slot} at this slot
                         {!full && <span className="text-[#B9E84A] ml-1">· {t.slotsAvailable} open</span>}
                         {full && <span className="text-red-400 ml-1">· Full</span>}
                       </span>
