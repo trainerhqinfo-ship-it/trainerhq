@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { createClient, getSessionUser } from "@/lib/supabase/server";
+import { createClient, getProfile } from "@/lib/supabase/server";
 import { Header } from "@/components/layout/header";
 import { Avatar } from "@/components/ui/avatar";
 import { formatTime, DAY_NAMES_FULL } from "@/lib/utils";
@@ -8,13 +8,11 @@ import { AvailabilityFinder } from "./availability-finder";
 const DAYS = [1, 2, 3, 4, 5, 6, 0]; // Mon–Sun
 
 export default async function ManagerAvailabilityPage() {
-  const user = await getSessionUser();
-  if (!user) redirect("/login");
+  const profile = await getProfile();
+  if (!profile) redirect("/login");
+  const { gymId } = profile;
 
   const supabase = await createClient();
-  const { data: profile } = await supabase.from("profiles").select("gym_id").eq("id", user.id).single();
-  const gymId = profile?.gym_id;
-  if (!gymId) redirect("/login");
 
   const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
   const monthEnd = new Date(

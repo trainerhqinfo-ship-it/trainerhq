@@ -1,5 +1,5 @@
 import { notFound, redirect } from "next/navigation";
-import { createClient, getSessionUser } from "@/lib/supabase/server";
+import { createClient, getProfile } from "@/lib/supabase/server";
 import { Header } from "@/components/layout/header";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge, StatusBadge } from "@/components/ui/badge";
@@ -23,17 +23,11 @@ export default async function TrainerDetailPage({
 }) {
   const { id } = await params;
 
-  const user = await getSessionUser();
-  if (!user) redirect("/login");
+  const profile = await getProfile();
+  if (!profile) redirect("/login");
+  const { gymId } = profile;
 
   const supabase = await createClient();
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("gym_id")
-    .eq("id", user.id)
-    .single();
-  const gymId = profile?.gym_id;
-  if (!gymId) redirect("/login");
 
   const targetDate = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
   const targetDow = new Date(targetDate + "T00:00:00").getDay();
@@ -403,7 +397,7 @@ export default async function TrainerDetailPage({
           slots={scheduleSlots}
           allClients={allClients}
           gymId={gymId}
-          userId={user.id}
+          userId={profile.user.id}
         />
 
         {/* ── Active Clients + Working Hours ── */}

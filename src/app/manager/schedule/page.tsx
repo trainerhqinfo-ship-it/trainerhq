@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { createClient, getSessionUser } from "@/lib/supabase/server";
+import { createClient, getProfile } from "@/lib/supabase/server";
 import { Header } from "@/components/layout/header";
 import { ScheduleContent } from "./schedule-content";
 
@@ -12,13 +12,11 @@ export default async function SchedulePage({
   const targetDate = dateParam ?? new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
   const targetDow = new Date(targetDate + "T00:00:00").getDay();
 
-  const user = await getSessionUser();
-  if (!user) redirect("/login");
+  const profile = await getProfile();
+  if (!profile) redirect("/login");
+  const { gymId } = profile;
 
   const supabase = await createClient();
-  const { data: profile } = await supabase.from("profiles").select("gym_id").eq("id", user.id).single();
-  const gymId = profile?.gym_id;
-  if (!gymId) redirect("/login");
 
   const [
     { data: trainersRaw },
@@ -187,7 +185,7 @@ export default async function SchedulePage({
           gridData={gridData as any}
           clients={(clientsRaw as any[]) ?? []}
           gymId={gymId}
-          userId={user.id}
+          userId={profile.user.id}
         />
       </div>
     </div>

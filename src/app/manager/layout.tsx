@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { getSessionUser } from "@/lib/supabase/server";
+import { getProfile, getGymData } from "@/lib/supabase/server";
 import { ManagerShell } from "@/components/layout/manager-shell";
 
 export default async function ManagerLayout({
@@ -7,9 +7,20 @@ export default async function ManagerLayout({
 }: {
   children: React.ReactNode;
 }) {
-  // Only check that a session exists (no DB query — avoids ~54s server→Supabase latency)
-  const user = await getSessionUser();
-  if (!user) redirect("/login");
+  const profile = await getProfile();
+  if (!profile) redirect("/login");
+  if (profile.role !== "gym_manager") redirect("/trainer");
 
-  return <ManagerShell userId={user.id}>{children}</ManagerShell>;
+  const gym = await getGymData(profile.gymId);
+
+  return (
+    <ManagerShell
+      gymName={gym?.name ?? ""}
+      gymBranch={gym?.branch_name ?? undefined}
+      userFirstName={profile.firstName}
+      userLastName={profile.lastName}
+    >
+      {children}
+    </ManagerShell>
+  );
 }

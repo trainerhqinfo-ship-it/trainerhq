@@ -1,59 +1,29 @@
 "use client";
 import { useState, useEffect } from "react";
-import { useRouter, usePathname } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
+import { usePathname } from "next/navigation";
 import { Sidebar } from "./sidebar";
 import { Avatar } from "@/components/ui/avatar";
 import { Menu, X } from "lucide-react";
 
 interface ManagerShellProps {
   children: React.ReactNode;
-  userId: string;
+  gymName: string;
+  gymBranch?: string;
+  userFirstName: string;
+  userLastName: string;
 }
 
-function getMonogram(name: string): string {
-  return name.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join("");
-}
-
-export function ManagerShell({ children, userId }: ManagerShellProps) {
-  const router = useRouter();
+export function ManagerShell({
+  children,
+  gymName,
+  gymBranch,
+  userFirstName,
+  userLastName,
+}: ManagerShellProps) {
   const pathname = usePathname();
-  const [gym, setGym] = useState({ name: "Iron Kingdom", branch_name: null as string | null });
-  const [user, setUser] = useState({ first_name: "Manager", last_name: "" });
   const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => { setMobileOpen(false); }, [pathname]);
-
-  useEffect(() => {
-    async function loadGymData() {
-      const supabase = createClient();
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("first_name, last_name, role, gym_id")
-        .eq("id", userId)
-        .single();
-
-      if (!profile) return;
-      if (profile.role !== "gym_manager") {
-        router.push("/trainer");
-        return;
-      }
-
-      setUser({ first_name: profile.first_name ?? "Manager", last_name: profile.last_name ?? "" });
-
-      if (profile.gym_id) {
-        const { data: gymData } = await supabase
-          .from("gyms")
-          .select("name, branch_name")
-          .eq("id", profile.gym_id)
-          .single();
-        if (gymData) setGym(gymData);
-      }
-    }
-    loadGymData();
-  }, [userId, router]);
-
-  const monogram = getMonogram(gym.name);
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -72,10 +42,10 @@ export function ManagerShell({ children, userId }: ManagerShellProps) {
         ${mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}
       `}>
         <Sidebar
-          gymName={gym.name}
-          gymBranch={gym.branch_name ?? undefined}
-          userFirstName={user.first_name}
-          userLastName={user.last_name}
+          gymName={gymName}
+          gymBranch={gymBranch}
+          userFirstName={userFirstName}
+          userLastName={userLastName}
           role="gym_manager"
         />
       </div>
@@ -101,15 +71,15 @@ export function ManagerShell({ children, userId }: ManagerShellProps) {
               </svg>
             </div>
             <div className="text-center">
-              <div className="text-white text-xs font-semibold leading-tight">{gym.name}</div>
-              {gym.branch_name && (
-                <div className="text-[#6B6E67] text-[10px] leading-tight">{gym.branch_name}</div>
+              <div className="text-white text-xs font-semibold leading-tight">{gymName}</div>
+              {gymBranch && (
+                <div className="text-[#6B6E67] text-[10px] leading-tight">{gymBranch}</div>
               )}
             </div>
           </div>
 
           {/* Avatar */}
-          <Avatar firstName={user.first_name} lastName={user.last_name} size="sm" />
+          <Avatar firstName={userFirstName} lastName={userLastName} size="sm" />
         </div>
 
         <main className="flex-1 overflow-y-auto bg-[#1A1C18]">{children}</main>

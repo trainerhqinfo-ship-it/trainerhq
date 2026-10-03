@@ -1,29 +1,28 @@
 import { redirect } from "next/navigation";
-import { createClient, getSessionUser } from "@/lib/supabase/server";
+import { createClient, getProfile, getGymData } from "@/lib/supabase/server";
 import { Header } from "@/components/layout/header";
 import { UserPlus } from "lucide-react";
 import { TrainersTable } from "./trainers-table";
 
 export default async function ManagerTrainersPage() {
-  const user = await getSessionUser();
-  if (!user) redirect("/login");
+  const profile = await getProfile();
+  if (!profile) redirect("/login");
+  const { gymId } = profile;
 
   const supabase = await createClient();
-  const { data: profile } = await supabase.from("profiles").select("gym_id").eq("id", user.id).single();
-  const gymId = profile?.gym_id;
-  if (!gymId) redirect("/login");
 
   const targetDate = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
   const targetDow = new Date(targetDate + "T00:00:00").getDay();
   const nowIST = new Date().toLocaleTimeString("en-CA", { timeZone: "Asia/Kolkata", hour12: false });
   const currentHour = parseInt(nowIST.split(":")[0]);
 
+  const gymData = await getGymData(gymId);
+
   const [
     { data: trainersRaw },
     { data: assignmentsRaw },
     { data: feedbackRaw },
     { data: leavesTodayRaw },
-    { data: gymData },
   ] = await Promise.all([
     supabase
       .from("trainers")
@@ -45,7 +44,6 @@ export default async function ManagerTrainersPage() {
       .eq("gym_id", gymId)
       .lte("start_date", targetDate)
       .gte("end_date", targetDate),
-    supabase.from("gyms").select("default_slot_duration").eq("id", gymId).single(),
   ]);
 
   const slotDuration = gymData?.default_slot_duration ?? 60;

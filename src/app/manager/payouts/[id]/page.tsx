@@ -1,6 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
-import { createClient, getSessionUser } from "@/lib/supabase/server";
+import { createClient, getProfile } from "@/lib/supabase/server";
 import { Header } from "@/components/layout/header";
 import { Avatar } from "@/components/ui/avatar";
 import { formatCurrency } from "@/lib/utils";
@@ -27,16 +27,11 @@ export default async function PayoutDetailPage({
 }) {
   const { id } = await params;
 
-  const user = await getSessionUser();
-  if (!user) redirect("/login");
+  const profile = await getProfile();
+  if (!profile) redirect("/login");
+  const { gymId } = profile;
 
   const supabase = await createClient();
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("gym_id")
-    .eq("id", user.id)
-    .single();
-  const gymId = profile?.gym_id;
   if (!gymId) redirect("/login");
 
   const { data: payoutRaw } = await supabase

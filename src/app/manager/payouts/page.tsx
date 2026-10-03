@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { createClient, getSessionUser } from "@/lib/supabase/server";
+import { createClient, getProfile } from "@/lib/supabase/server";
 import { Header } from "@/components/layout/header";
 import { formatCurrency } from "@/lib/utils";
 import { PayoutControls } from "./payout-controls";
@@ -19,17 +19,11 @@ export default async function PayoutsPage({
   const month = monthParam ? parseInt(monthParam) : now.getMonth() + 1;
   const year = yearParam ? parseInt(yearParam) : now.getFullYear();
 
-  const user = await getSessionUser();
-  if (!user) redirect("/login");
+  const profile = await getProfile();
+  if (!profile) redirect("/login");
+  const { gymId } = profile;
 
   const supabase = await createClient();
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("gym_id")
-    .eq("id", user.id)
-    .single();
-  const gymId = profile?.gym_id;
-  if (!gymId) redirect("/login");
 
   const [{ data: payoutsRaw }, { data: trainersData }] = await Promise.all([
     supabase

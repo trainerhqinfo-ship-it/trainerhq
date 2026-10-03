@@ -1,5 +1,5 @@
 import { notFound, redirect } from "next/navigation";
-import { createClient, getSessionUser } from "@/lib/supabase/server";
+import { createClient, getProfile } from "@/lib/supabase/server";
 import { Header } from "@/components/layout/header";
 import { Avatar } from "@/components/ui/avatar";
 import { StatusBadge } from "@/components/ui/badge";
@@ -10,13 +10,11 @@ import { Edit, UserCheck, RefreshCw, Star, ExternalLink, FileText } from "lucide
 export default async function ClientDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
 
-  const user = await getSessionUser();
-  if (!user) redirect("/login");
+  const profile = await getProfile();
+  if (!profile) redirect("/login");
+  const { gymId } = profile;
 
   const supabase = await createClient();
-  const { data: profile } = await supabase.from("profiles").select("gym_id").eq("id", user.id).single();
-  const gymId = profile?.gym_id;
-  if (!gymId) redirect("/login");
 
   const [
     { data: client },

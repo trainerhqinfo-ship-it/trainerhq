@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createClient, getSessionUser } from "@/lib/supabase/server";
+import { createClient, getProfile } from "@/lib/supabase/server";
 import { calculatePayoutForTrainer } from "@/lib/payout-utils";
 // NOTE: calculateAttendanceSummary is intentionally NOT imported here.
 // Attendance-based salary deductions are disabled until the Google Sheet
@@ -29,17 +29,12 @@ export async function updatePayoutStatus(
   payoutId: string,
   newStatus: "reviewed" | "approved" | "paid"
 ) {
-  const user = await getSessionUser();
-  if (!user) throw new Error("Unauthorized");
+  const p = await getProfile();
+  if (!p) throw new Error("Unauthorized");
+  const { gymId } = p;
+  const user = p.user;
 
   const supabase = await createClient();
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("gym_id")
-    .eq("id", user.id)
-    .single();
-  const gymId = profile?.gym_id;
-  if (!gymId) throw new Error("No gym");
 
   const { data: payout } = await supabase
     .from("trainer_payouts")
@@ -94,17 +89,12 @@ export async function updatePayoutAdjustment(
   adjustments: number,
   adjustment_notes: string
 ) {
-  const user = await getSessionUser();
-  if (!user) throw new Error("Unauthorized");
+  const p = await getProfile();
+  if (!p) throw new Error("Unauthorized");
+  const { gymId } = p;
+  const user = p.user;
 
   const supabase = await createClient();
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("gym_id")
-    .eq("id", user.id)
-    .single();
-  const gymId = profile?.gym_id;
-  if (!gymId) throw new Error("No gym");
 
   const { data: payout } = await supabase
     .from("trainer_payouts")
@@ -151,17 +141,12 @@ export async function updatePayoutDeduction(
   deductions: number,
   deduction_notes: string
 ) {
-  const user = await getSessionUser();
-  if (!user) throw new Error("Unauthorized");
+  const p = await getProfile();
+  if (!p) throw new Error("Unauthorized");
+  const { gymId } = p;
+  const user = p.user;
 
   const supabase = await createClient();
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("gym_id")
-    .eq("id", user.id)
-    .single();
-  const gymId = profile?.gym_id;
-  if (!gymId) throw new Error("No gym");
 
   const { data: payout } = await supabase
     .from("trainer_payouts")
@@ -209,16 +194,10 @@ export async function recalculatePayoutForTrainer(
   month: number,
   year: number
 ) {
-  const user = await getSessionUser();
-  if (!user) throw new Error("Unauthorized");
+  const p = await getProfile();
+  if (!p || p.gymId !== gymId) throw new Error("Unauthorized");
 
   const supabase = await createClient();
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("gym_id")
-    .eq("id", user.id)
-    .single();
-  if (profile?.gym_id !== gymId) throw new Error("Unauthorized");
 
   const { data: existing } = await supabase
     .from("trainer_payouts")
@@ -316,17 +295,12 @@ export async function recalculatePayoutForTrainer(
 
 // ── Generate all payouts for a month ──────────────────────────────────────────
 export async function generatePayoutsForMonth(month: number, year: number) {
-  const user = await getSessionUser();
-  if (!user) throw new Error("Unauthorized");
+  const p = await getProfile();
+  if (!p) throw new Error("Unauthorized");
+  const { gymId } = p;
+  const user = p.user;
 
   const supabase = await createClient();
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("gym_id")
-    .eq("id", user.id)
-    .single();
-  const gymId = profile?.gym_id;
-  if (!gymId) throw new Error("No gym");
 
   const { data: trainersRaw } = await supabase
     .from("trainers")

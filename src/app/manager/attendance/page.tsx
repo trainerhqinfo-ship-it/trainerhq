@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { createClient, getSessionUser } from "@/lib/supabase/server";
+import { createClient, getProfile } from "@/lib/supabase/server";
 import { Header } from "@/components/layout/header";
 import { AttendanceTable } from "./attendance-table";
 
@@ -10,17 +10,11 @@ export default async function AttendancePage({
 }) {
   const { trainer_id: filterTrainer, from: fromDate, to: toDate } = await searchParams;
 
-  const user = await getSessionUser();
-  if (!user) redirect("/login");
+  const profile = await getProfile();
+  if (!profile) redirect("/login");
+  const { gymId } = profile;
 
   const supabase = await createClient();
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("gym_id")
-    .eq("id", user.id)
-    .single();
-  const gymId = profile?.gym_id;
-  if (!gymId) redirect("/login");
 
   const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
   const defaultFrom = (() => {
@@ -98,7 +92,7 @@ export default async function AttendancePage({
               rangeFrom={rangeFrom}
               rangeTo={rangeTo}
               gymId={gymId}
-              userId={user.id}
+              userId={profile.user.id}
             />
           </div>
         </div>

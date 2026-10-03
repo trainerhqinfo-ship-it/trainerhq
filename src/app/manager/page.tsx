@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { createClient, getSessionUser } from "@/lib/supabase/server";
+import { createClient, getProfile, getGymData } from "@/lib/supabase/server";
 import { Bell } from "lucide-react";
 import { DashboardContent } from "./dashboard-content";
 
@@ -27,20 +27,14 @@ export default async function ManagerDashboard({
     new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
   const targetDow = new Date(targetDate + "T00:00:00").getDay();
 
-  const user = await getSessionUser();
-  if (!user) redirect("/login");
+  const profile = await getProfile();
+  if (!profile) redirect("/login");
+  const { gymId } = profile;
 
   const supabase = await createClient();
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("first_name, gym_id")
-    .eq("id", user.id)
-    .single();
-  const gymId = profile?.gym_id;
-  if (!gymId) redirect("/login");
+  const gymData = await getGymData(gymId);
 
   const [
-    { data: gymData },
     { data: trainersRaw },
     { data: sessionsRaw },
     { data: assignmentsRaw },
@@ -49,7 +43,6 @@ export default async function ManagerDashboard({
     { data: clientsRaw },
     { data: flaggedRaw },
   ] = await Promise.all([
-    supabase.from("gyms").select("name, branch_name, default_slot_duration").eq("id", gymId).single(),
     supabase
       .from("trainers")
       .select("*, trainer_working_hours(*)")
@@ -259,7 +252,7 @@ export default async function ManagerDashboard({
     });
   }
 
-  const managerName = profile?.first_name ?? "";
+  const managerName = profile.firstName;
   const gymName = gymData?.name ?? "Iron Kingdom";
   const gymBranch = gymData?.branch_name ?? null;
   const displayDate = new Date(targetDate + "T00:00:00");
@@ -309,7 +302,7 @@ export default async function ManagerDashboard({
           kpis={kpis}
           clients={(clientsRaw as any[]) ?? []}
           gymId={gymId}
-          userId={user.id}
+          userId={profile.user.id}
           alerts={alerts}
         />
       </div>

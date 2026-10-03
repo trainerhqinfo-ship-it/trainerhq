@@ -26,17 +26,9 @@ function LoginForm() {
       return;
     }
 
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("id", data.user.id)
-      .single();
-
-    if (profile?.role === "trainer") {
-      window.location.href = "/trainer";
-    } else {
-      window.location.href = "/manager";
-    }
+    // Role-based routing is handled server-side in the manager layout.
+    // Trainers hitting /manager are redirected to /trainer automatically.
+    window.location.href = "/manager";
   }
 
   return (

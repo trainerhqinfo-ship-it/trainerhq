@@ -1,17 +1,15 @@
 import { redirect } from "next/navigation";
-import { createClient, getSessionUser } from "@/lib/supabase/server";
+import { createClient, getProfile } from "@/lib/supabase/server";
 import { Header } from "@/components/layout/header";
 import { UserPlus } from "lucide-react";
 import { ClientsTable } from "./clients-table";
 
 export default async function ManagerClientsPage() {
-  const user = await getSessionUser();
-  if (!user) redirect("/login");
+  const profile = await getProfile();
+  if (!profile) redirect("/login");
+  const { gymId } = profile;
 
   const supabase = await createClient();
-  const { data: profile } = await supabase.from("profiles").select("gym_id").eq("id", user.id).single();
-  const gymId = profile?.gym_id;
-  if (!gymId) redirect("/login");
 
   const [
     { data: clientsRaw },
