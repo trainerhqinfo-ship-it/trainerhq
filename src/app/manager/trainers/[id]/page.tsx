@@ -168,11 +168,32 @@ export default async function TrainerDetailPage({
   if (clientIds.length > 0) {
     const { data: pkgs } = await supabase
       .from("pt_packages")
-      .select("client_id, package_name, total_sessions, is_active")
+      .select("client_id, package_name, total_sessions, is_active, amount_collected, start_date, end_date, trainer_payout_type, trainer_payout_value")
       .in("client_id", clientIds)
       .eq("gym_id", gymId)
       .eq("is_active", true);
     (pkgs ?? []).forEach((p: any) => { packagesMap[p.client_id] = p; });
+  }
+
+  function calcDurationMonths(startDate: string, endDate: string | null | undefined): number {
+    if (!endDate) return 1;
+    const [sy, sm] = startDate.split("-").map(Number);
+    const [ey, em] = endDate.split("-").map(Number);
+    return Math.max(1, (ey - sy) * 12 + (em - sm) + 1);
+  }
+
+  function calcMonthlyCommission(
+    type: string | null,
+    value: number | null,
+    amountCollected: number,
+    startDate: string | null,
+    endDate: string | null
+  ): number | null {
+    if (!type || value == null || value <= 0 || !startDate) return null;
+    const duration = calcDurationMonths(startDate, endDate);
+    const monthly = amountCollected / duration;
+    if (type === "percentage") return Math.round((monthly * value) / 100 * 100) / 100;
+    return value; // fixed_monthly
   }
 
   // ── Today's schedule slots ──
@@ -444,6 +465,38 @@ export default async function TrainerDetailPage({
                           <span className="ml-2 text-[#4A4D47]">· {pkg.package_name}</span>
                         )}
                       </div>
+                      {pkg && (
+                        <div className="flex items-center gap-2 mt-1">
+                          {pkg.trainer_payout_type && pkg.trainer_payout_value != null ? (
+                            <>
+                              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[#B9E84A]/10 text-[#B9E84A] border border-[#B9E84A]/20">
+                                PKG
+                              </span>
+                              <span className="text-[10px] text-[#9B9E96]">
+                                {pkg.trainer_payout_type === "percentage"
+                                  ? `${pkg.trainer_payout_value}% of monthly value`
+                                  : `₹${pkg.trainer_payout_value.toLocaleString("en-IN")}/mo`}
+                              </span>
+                              {(() => {
+                                const mp = calcMonthlyCommission(
+                                  pkg.trainer_payout_type,
+                                  pkg.trainer_payout_value,
+                                  pkg.amount_collected ?? 0,
+                                  pkg.start_date,
+                                  pkg.end_date
+                                );
+                                return mp != null ? (
+                                  <span className="text-[10px] text-[#B9E84A] font-semibold">
+                                    = ₹{mp.toLocaleString("en-IN")}/mo
+                                  </span>
+                                ) : null;
+                              })()}
+                            </>
+                          ) : (
+                            <span className="text-[10px] text-[#4A4D47]">trainer default</span>
+                          )}
+                        </div>
+                      )}
                     </div>
                     {totalSessions > 0 && (
                       <div className="text-right flex-shrink-0">

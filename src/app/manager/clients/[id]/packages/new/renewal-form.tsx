@@ -82,6 +82,8 @@ interface PrevPackage {
   end_date: string | null;
   amount_collected: number | null;
   invoice_number: string | null;
+  trainer_payout_type: "fixed_monthly" | "percentage" | null;
+  trainer_payout_value: number | null;
 }
 
 interface CurrentAssignment {
@@ -125,6 +127,8 @@ export function RenewalForm({ clientId, clientName, clientPhone, prevPackage, cu
     trainer_id: currentAssignment?.trainer_id ?? "",
     preferred_time: currentAssignment?.preferred_time ?? "07:00",
     days_of_week: currentAssignment?.days_of_week ?? [1, 3, 5],
+    payout_type: prevPackage?.trainer_payout_type ?? ("" as "fixed_monthly" | "percentage" | ""),
+    payout_value: prevPackage?.trainer_payout_value != null ? String(prevPackage.trainer_payout_value) : "",
   });
 
   const update = useCallback((key: keyof typeof form, value: any) => {
@@ -224,6 +228,8 @@ export function RenewalForm({ clientId, clientName, clientPhone, prevPackage, cu
         .eq("is_active", true);
 
       // 3. Insert new package
+      const payoutTypeVal = form.payout_type || null;
+      const payoutValueNum = form.payout_value ? parseFloat(form.payout_value) : null;
       const { data: pkg, error: pkgErr } = await supabase
         .from("pt_packages")
         .insert({
@@ -238,6 +244,8 @@ export function RenewalForm({ clientId, clientName, clientPhone, prevPackage, cu
           invoice_number: form.invoice_number || null,
           bill_url: billUrl,
           is_active: true,
+          trainer_payout_type: payoutTypeVal,
+          trainer_payout_value: payoutValueNum && payoutValueNum > 0 ? payoutValueNum : null,
         } as any)
         .select()
         .single();
@@ -420,6 +428,65 @@ export function RenewalForm({ clientId, clientName, clientPhone, prevPackage, cu
             <FieldRow icon={Calendar} label="Start Date *" value={form.start_date} onChange={(v) => update("start_date", v)} type="date" />
             <FieldRow icon={Calendar} label="End Date" value={form.end_date} onChange={(v) => update("end_date", v)} type="date" />
             <FieldRow icon={Hash} label="Invoice Number" value={form.invoice_number} onChange={(v) => update("invoice_number", v)} placeholder="e.g. INV-2024-002" />
+          </div>
+
+          {/* Trainer Commission */}
+          <div className="bg-[#1A1C18] border border-[#2E3129] rounded-2xl p-4 space-y-3">
+            <div className="text-[10px] font-semibold text-[#6B6E67] tracking-wider uppercase">
+              Trainer Commission
+              {prevPackage?.trainer_payout_type && (
+                <span className="ml-2 text-[#B9E84A]">
+                  (inherited from previous: {prevPackage.trainer_payout_type === "percentage" ? `${prevPackage.trainer_payout_value}%` : `₹${prevPackage.trainer_payout_value}/mo`})
+                </span>
+              )}
+            </div>
+            <div className="flex gap-2">
+              {(["fixed_monthly", "percentage"] as const).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => update("payout_type", t)}
+                  className={`flex-1 h-9 rounded-lg border text-xs font-medium transition-colors ${
+                    form.payout_type === t
+                      ? "bg-[#B9E84A]/10 border-[#B9E84A] text-[#B9E84A]"
+                      : "bg-[#222520] border-[#2E3129] text-[#9B9E96] hover:border-[#E8EBE4]"
+                  }`}
+                >
+                  {t === "fixed_monthly" ? "Fixed Monthly (₹)" : "Percentage (%)"}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => { update("payout_type", ""); update("payout_value", ""); }}
+                className={`h-9 px-3 rounded-lg border text-xs font-medium transition-colors ${
+                  !form.payout_type
+                    ? "bg-[#2E3129] border-[#4A4D47] text-[#9B9E96]"
+                    : "bg-[#222520] border-[#2E3129] text-[#4A4D47] hover:border-[#6B6E67]"
+                }`}
+              >
+                None
+              </button>
+            </div>
+            {form.payout_type && (
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-[#6B6E67]">
+                  {form.payout_type === "fixed_monthly" ? "₹" : "%"}
+                </span>
+                <input
+                  type="number"
+                  min="0"
+                  max={form.payout_type === "percentage" ? "100" : undefined}
+                  step="0.01"
+                  value={form.payout_value}
+                  onChange={(e) => update("payout_value", e.target.value)}
+                  placeholder={form.payout_type === "fixed_monthly" ? "e.g. 2000" : "e.g. 20"}
+                  className="w-full pl-7 pr-3 h-10 bg-[#222520] border border-[#2E3129] rounded-xl text-sm text-[#E8EBE4] placeholder-[#4A4D47] focus:outline-none focus:border-[#B9E84A]"
+                />
+              </div>
+            )}
+            {!form.payout_type && (
+              <p className="text-[10px] text-[#4A4D47]">No package-level rule set — will fall back to trainer default rule.</p>
+            )}
           </div>
 
           <div className="flex gap-3">

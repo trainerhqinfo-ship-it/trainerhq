@@ -21,7 +21,7 @@ export default async function NewPackagePage({ params }: { params: Promise<{ id:
       .single(),
     supabase
       .from("pt_packages")
-      .select("id, package_name, start_date, end_date, amount_collected, invoice_number")
+      .select("id, package_name, start_date, end_date, amount_collected, invoice_number, trainer_payout_type, trainer_payout_value")
       .eq("client_id", clientId)
       .eq("gym_id", gymId)
       .order("start_date", { ascending: false })

@@ -6,6 +6,7 @@ import { StatusBadge } from "@/components/ui/badge";
 import { formatDate, formatTime, DAY_NAMES_FULL } from "@/lib/utils";
 import Link from "next/link";
 import { Edit, UserCheck, RefreshCw, Star, ExternalLink, FileText } from "lucide-react";
+import { ClientCommissionEditor } from "./client-commission-editor";
 
 export default async function ClientDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -48,6 +49,22 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
   const avgRating = feedback.length > 0
     ? (feedback.reduce((s: number, f: any) => s + (f.overall_rating ?? 0), 0) / feedback.length).toFixed(1)
     : null;
+
+  // Fetch trainer's default commission rule (fallback display when no package-level rule set)
+  let trainerDefaultRule: any = null;
+  const assignedTrainerId = (assignment as any)?.trainer_id as string | undefined;
+  if (assignedTrainerId) {
+    const { data: defaultRule } = await supabase
+      .from("trainer_commission_rules")
+      .select("commission_type, commission_value")
+      .eq("trainer_id", assignedTrainerId)
+      .eq("gym_id", gymId)
+      .is("effective_to", null)
+      .order("effective_from", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    trainerDefaultRule = defaultRule;
+  }
 
   return (
     <div>
@@ -241,6 +258,20 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
                 </div>
               )}
             </div>
+
+            <ClientCommissionEditor
+              clientId={id}
+              packageId={(pkg as any)?.id ?? null}
+              trainerName={trainer ? `${trainer.first_name} ${trainer.last_name}` : null}
+              currentType={(pkg as any)?.trainer_payout_type ?? null}
+              currentValue={(pkg as any)?.trainer_payout_value != null ? Number((pkg as any).trainer_payout_value) : null}
+              packageAmount={Number((pkg as any)?.amount_collected ?? 0)}
+              startDate={(pkg as any)?.start_date ?? null}
+              endDate={(pkg as any)?.end_date ?? null}
+              packageName={(pkg as any)?.package_name ?? null}
+              trainerDefaultType={trainerDefaultRule?.commission_type ?? null}
+              trainerDefaultValue={trainerDefaultRule?.commission_value != null ? Number(trainerDefaultRule.commission_value) : null}
+            />
           </div>
         </div>
 

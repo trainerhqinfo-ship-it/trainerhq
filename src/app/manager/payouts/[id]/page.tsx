@@ -143,13 +143,13 @@ export default async function PayoutDetailPage({
 
           {breakdown && breakdown.breakdown.length > 0 ? (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[700px]">
+              <table className="w-full min-w-[900px]">
                 <thead>
                   <tr className="border-b border-[#1A1C18]">
-                    {["Client","Package","Package Date","Amount Paid","Rule","Commission"].map((h) => (
+                    {["Client","Package","Date","Paid","Duration","Monthly Value","Source / Rule","Commission"].map((h) => (
                       <th
                         key={h}
-                        className="text-left px-5 py-3 text-[11px] font-semibold text-[#6B6E67] uppercase tracking-wide"
+                        className="text-left px-4 py-3 text-[11px] font-semibold text-[#6B6E67] uppercase tracking-wide"
                       >
                         {h}
                       </th>
@@ -157,55 +157,86 @@ export default async function PayoutDetailPage({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#1A1C18]">
-                  {breakdown.breakdown.map((row) => (
-                    <tr key={row.package_id} className="hover:bg-[#1A1C18]/50 transition-colors">
-                      <td className="px-5 py-3 text-sm font-medium text-[#E8EBE4]">
-                        {row.first_name} {row.last_name}
-                      </td>
-                      <td className="px-5 py-3">
-                        <div className="text-sm text-[#E8EBE4]">{row.package_name ?? "—"}</div>
-                        {row.sessions_total != null && (
-                          <div className="text-[10px] text-[#6B6E67] mt-0.5">
-                            {row.sessions_total} sessions (informational)
+                  {breakdown.breakdown.map((row) => {
+                    const r = row as any;
+                    return (
+                      <tr key={row.package_id} className="hover:bg-[#1A1C18]/50 transition-colors">
+                        <td className="px-4 py-3 text-sm font-medium text-[#E8EBE4]">
+                          {row.first_name} {row.last_name}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="text-sm text-[#E8EBE4]">{row.package_name ?? "—"}</div>
+                          {row.sessions_total != null && (
+                            <div className="text-[10px] text-[#6B6E67] mt-0.5">
+                              {row.sessions_total} sessions
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-[#9B9E96] tabular-nums whitespace-nowrap">
+                          <div>{fmtDate(row.package_date)}</div>
+                          {r.package_end_date && (
+                            <div className="text-[10px] text-[#4A4D47]">→ {fmtDate(r.package_end_date)}</div>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-sm font-medium text-[#E8EBE4] tabular-nums">
+                          {formatCurrency(row.package_amount)}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-[#9B9E96] tabular-nums">
+                          {r.duration_months != null && r.duration_months > 1
+                            ? <span>{r.duration_months} mo</span>
+                            : <span className="text-[#4A4D47]">1 mo</span>}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-[#9B9E96] tabular-nums">
+                          {r.monthly_package_value != null && r.duration_months > 1
+                            ? <span>{formatCurrency(r.monthly_package_value)}/mo</span>
+                            : <span className="text-[#4A4D47]">—</span>}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {r.commission_source === "package" ? (
+                              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[#B9E84A]/10 text-[#B9E84A] border border-[#B9E84A]/20">PKG</span>
+                            ) : r.commission_source === "trainer_default" ? (
+                              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[#2E3129] text-[#9B9E96] border border-[#2E3129]">DEFAULT</span>
+                            ) : (
+                              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-400 border border-orange-500/20">NONE</span>
+                            )}
                           </div>
-                        )}
-                      </td>
-                      <td className="px-5 py-3 text-sm text-[#9B9E96] tabular-nums whitespace-nowrap">
-                        {fmtDate(row.package_date)}
-                      </td>
-                      <td className="px-5 py-3 text-sm font-medium text-[#E8EBE4] tabular-nums">
-                        {formatCurrency(row.package_amount)}
-                      </td>
-                      <td className="px-5 py-3 text-sm text-[#9B9E96]">
-                        {row.commission_type === null ? (
-                          <span className="text-red-400 text-xs">No rule</span>
-                        ) : row.commission_type === "percentage" ? (
-                          <span>{row.commission_rate}%</span>
-                        ) : (
-                          <span>₹{row.commission_rate?.toLocaleString("en-IN")}/package</span>
-                        )}
-                      </td>
-                      <td className="px-5 py-3 text-sm font-semibold text-[#B9E84A] tabular-nums">
-                        {row.commission > 0
-                          ? formatCurrency(row.commission)
-                          : <span className="text-[#6B6E67]">—</span>}
-                      </td>
-                    </tr>
-                  ))}
+                          <div className="text-xs text-[#9B9E96] mt-0.5">
+                            {row.commission_type === null ? (
+                              <span className="text-red-400">No rule</span>
+                            ) : row.commission_type === "percentage" ? (
+                              <span>{row.commission_rate}%</span>
+                            ) : (
+                              <span>₹{row.commission_rate?.toLocaleString("en-IN")}/mo</span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-sm font-semibold text-[#B9E84A] tabular-nums">
+                          {row.commission > 0
+                            ? formatCurrency(row.commission)
+                            : <span className="text-[#6B6E67]">—</span>}
+                          {row.commission > 0 && (
+                            <div className="text-[10px] text-[#6B6E67] font-normal">/mo</div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
 
                   {/* Totals row */}
                   <tr className="bg-[#1A1C18] border-t-2 border-[#2E3129]">
                     <td
-                      className="px-5 py-3 text-xs font-semibold text-[#6B6E67] uppercase tracking-wide"
+                      className="px-4 py-3 text-xs font-semibold text-[#6B6E67] uppercase tracking-wide"
                       colSpan={3}
                     >
                       Total ({breakdown.package_count} active client{breakdown.package_count !== 1 ? "s" : ""})
                     </td>
-                    <td className="px-5 py-3 text-sm font-semibold text-[#E8EBE4] tabular-nums">
+                    <td className="px-4 py-3 text-sm font-semibold text-[#E8EBE4] tabular-nums">
                       {formatCurrency(breakdown.eligible_revenue)}
                     </td>
+                    <td colSpan={2} />
                     <td />
-                    <td className="px-5 py-3 text-sm font-bold text-[#B9E84A] tabular-nums">
+                    <td className="px-4 py-3 text-sm font-bold text-[#B9E84A] tabular-nums">
                       {formatCurrency(breakdown.calculated_payout)}
                     </td>
                   </tr>
