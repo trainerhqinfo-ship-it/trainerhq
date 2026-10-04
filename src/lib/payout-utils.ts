@@ -140,6 +140,8 @@ export async function calculatePayoutForTrainer(
     if (todayCutoff) {
       // MTD: exclude packages not yet started as of today; no lower-date restriction
       if (date > todayCutoff) continue;
+      // Exclude packages whose end_date has already passed (expired before today)
+      if (pkg.end_date && pkg.end_date < todayCutoff) continue;
     } else {
       // Full month: package must have started within this specific month
       if (date < periodStart || date >= periodEnd) continue;
