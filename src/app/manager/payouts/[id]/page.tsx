@@ -134,8 +134,10 @@ export default async function PayoutDetailPage({
             <h3 className="text-sm font-semibold text-[#E8EBE4]">Commission Breakdown</h3>
             <p className="text-xs text-[#6B6E67] mt-0.5">
               {breakdown
-                ? `${breakdown.breakdown.length} active PT client${breakdown.breakdown.length !== 1 ? "s" : ""} with packages starting in ${monthName} ${payout.period_year}${isCurrentMonth && todayCutoff ? ` (through ${todayCutoff})` : ""}`
-                : "No active PT clients with packages starting this period, or no commission rule configured"}
+                ? isCurrentMonth
+                  ? `${breakdown.breakdown.length} active PT client${breakdown.breakdown.length !== 1 ? "s" : ""} with active packages as of ${todayCutoff} (month-to-date)`
+                  : `${breakdown.breakdown.length} active PT client${breakdown.breakdown.length !== 1 ? "s" : ""} with packages starting in ${monthName} ${payout.period_year}`
+                : "No active PT clients with qualifying packages this period, or no commission rule configured"}
             </p>
           </div>
 

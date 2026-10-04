@@ -113,14 +113,22 @@ export async function calculatePayoutForTrainer(
     .eq("gym_id", gymId)
     .eq("is_active", true);
 
-  // ── Filter: package must have started in this payout period ─────────────
-  // Commission is earned in the month the package starts.
-  // Fallback: if start_date is null, use created_at date (legacy safety net).
-  // Deduplication: one entry per client (keep latest start_date if multiple).
+  // ── Filter: date gate differs between MTD and full-month modes ──────────
   //
-  // Date bounds:
-  //   todayCutoff provided → MTD mode: date >= periodStart && date <= todayCutoff
-  //   todayCutoff omitted  → full month: date >= periodStart && date < periodEnd
+  // MTD mode (todayCutoff provided — current month only):
+  //   Include ALL currently active packages (is_active=true) whose start_date
+  //   is on or before today. This captures ongoing PT relationships regardless
+  //   of when the package was purchased — an August 15 package still active in
+  //   October counts for October's payout. Only future-dated packages are excluded.
+  //   Lower bound removed intentionally: no "started this month" restriction.
+  //
+  // Full-month mode (no todayCutoff — historical months):
+  //   Commission is earned in the month the package was purchased/started.
+  //   start_date must fall in [periodStart, periodEnd). An August package does
+  //   NOT count for September; it counted for August when generated then.
+  //
+  // Fallback: if start_date is null, use created_at date (legacy safety net).
+  // Deduplication: one record per client — keep latest start_date.
   const packagesByClient: Record<string, { pkg: any; date: string }> = {};
 
   for (const pkg of (packagesRaw ?? []) as any[]) {
@@ -129,8 +137,13 @@ export async function calculatePayoutForTrainer(
     const date: string =
       pkg.start_date ?? (pkg.created_at as string | undefined)?.slice(0, 10) ?? "";
 
-    if (date < periodStart) continue;
-    if (todayCutoff ? date > todayCutoff : date >= periodEnd) continue;
+    if (todayCutoff) {
+      // MTD: exclude packages not yet started as of today; no lower-date restriction
+      if (date > todayCutoff) continue;
+    } else {
+      // Full month: package must have started within this specific month
+      if (date < periodStart || date >= periodEnd) continue;
+    }
 
     const existing = packagesByClient[pkg.client_id];
     if (!existing || date > existing.date) {
