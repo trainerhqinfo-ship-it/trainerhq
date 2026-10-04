@@ -49,12 +49,20 @@ export default async function PayoutDetailPage({
   const monthName = MONTH_NAMES[payout.period_month - 1];
   const trainerFullName = `${trainer?.first_name ?? ""} ${trainer?.last_name ?? ""}`.trim();
 
+  // For the current month, cap package dates at today so future packages aren't counted.
+  const nowUtc = new Date();
+  const isCurrentMonth =
+    payout.period_month === nowUtc.getUTCMonth() + 1 &&
+    payout.period_year === nowUtc.getUTCFullYear();
+  const todayCutoff = isCurrentMonth ? nowUtc.toISOString().slice(0, 10) : undefined;
+
   const breakdown = await calculatePayoutForTrainer(
     supabase,
     payout.trainer_id,
     gymId,
     payout.period_month,
-    payout.period_year
+    payout.period_year,
+    todayCutoff
   );
 
   return (
@@ -126,7 +134,7 @@ export default async function PayoutDetailPage({
             <h3 className="text-sm font-semibold text-[#E8EBE4]">Commission Breakdown</h3>
             <p className="text-xs text-[#6B6E67] mt-0.5">
               {breakdown
-                ? `${breakdown.breakdown.length} active PT client${breakdown.breakdown.length !== 1 ? "s" : ""} with packages starting in ${monthName} ${payout.period_year}`
+                ? `${breakdown.breakdown.length} active PT client${breakdown.breakdown.length !== 1 ? "s" : ""} with packages starting in ${monthName} ${payout.period_year}${isCurrentMonth && todayCutoff ? ` (through ${todayCutoff})` : ""}`
                 : "No active PT clients with packages starting this period, or no commission rule configured"}
             </p>
           </div>

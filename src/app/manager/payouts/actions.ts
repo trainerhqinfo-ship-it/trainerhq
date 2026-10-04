@@ -187,6 +187,13 @@ export async function updatePayoutDeduction(
   revalidatePath(`/manager/trainers/${(payout as any).trainer_id}`);
 }
 
+// Returns "YYYY-MM-DD" for today in UTC — used as MTD cutoff for the current month.
+function getTodayCutoff(month: number, year: number): string | undefined {
+  const now = new Date();
+  const isCurrentMonth = month === now.getUTCMonth() + 1 && year === now.getUTCFullYear();
+  return isCurrentMonth ? now.toISOString().slice(0, 10) : undefined;
+}
+
 // ── Recalculate single trainer ─────────────────────────────────────────────────
 export async function recalculatePayoutForTrainer(
   trainerId: string,
@@ -213,8 +220,9 @@ export async function recalculatePayoutForTrainer(
     return { skipped: true, reason: `payout_already_${existingStatus}` };
   }
 
-  // PT commission (package-based, unchanged)
-  const calc = await calculatePayoutForTrainer(supabase, trainerId, gymId, month, year);
+  // PT commission — use today as upper bound for current month (MTD)
+  const todayCutoff = getTodayCutoff(month, year);
+  const calc = await calculatePayoutForTrainer(supabase, trainerId, gymId, month, year, todayCutoff);
 
   // Base salary (no attendance deduction applied)
   const { data: trainerRowRaw } = await supabase
@@ -225,17 +233,6 @@ export async function recalculatePayoutForTrainer(
     .single();
   const trainerRow = trainerRowRaw as any;
   const baseSalary = Number(trainerRow?.base_salary ?? 0);
-
-  // No packages AND no salary → delete draft or skip
-  if (!calc && baseSalary === 0) {
-    if (existing) {
-      await supabase.from("trainer_payouts").delete().eq("id", (existing as any).id);
-      revalidatePath("/manager/payouts");
-      revalidatePath(`/manager/trainers/${trainerId}`);
-      return { deleted: true };
-    }
-    return { skipped: true, reason: "no_packages_no_salary" };
-  }
 
   const existingAdj = Number((existing as any)?.adjustments ?? 0);
   const existingDed = Number((existing as any)?.deductions ?? 0);
@@ -309,6 +306,10 @@ export async function generatePayoutsForMonth(month: number, year: number) {
     .eq("status", "active");
   const trainers = (trainersRaw ?? []) as any[];
 
+  // For the current month, cap package dates at today (MTD calculation).
+  // Past months use the full month boundary in calculatePayoutForTrainer.
+  const todayCutoff = getTodayCutoff(month, year);
+
   const results = { created: 0, updated: 0, skipped: 0, errors: 0 };
 
   for (const trainer of trainers) {
@@ -322,18 +323,19 @@ export async function generatePayoutsForMonth(month: number, year: number) {
         .eq("period_year", year)
         .maybeSingle();
 
+      // Never overwrite a locked (non-draft) payout
       if (existing && (existing as any).status !== "draft") {
         results.skipped++;
         continue;
       }
 
-      const calc = await calculatePayoutForTrainer(supabase, trainer.id, gymId, month, year);
+      const calc = await calculatePayoutForTrainer(supabase, trainer.id, gymId, month, year, todayCutoff);
       const baseSalary = Number(trainer.base_salary ?? 0);
 
-      if (!calc && baseSalary === 0) {
-        results.skipped++;
-        continue;
-      }
+      // Always create/update a record for every active trainer so they appear
+      // on the payouts page even with ₹0 commission (e.g. no packages this month).
+      // Previously this skipped trainers with no packages AND no salary; that
+      // caused "No payouts" when an entire month had no new package sales.
 
       const existingAdj = Number((existing as any)?.adjustments ?? 0);
       const existingDed = Number((existing as any)?.deductions ?? 0);
@@ -348,8 +350,8 @@ export async function generatePayoutsForMonth(month: number, year: number) {
         absent_days: 0,
         leave_days: 0,
         attendance_deduction: 0,
-        commission_type: calc?.commission_type ?? "fixed_per_session",
-        commission_value: calc?.commission_value ?? 0,
+        commission_type: calc?.commission_type ?? null,
+        commission_value: calc?.commission_value ?? null,
         commission_rule_id: calc?.commission_rule_id ?? null,
         completed_sessions: calc?.package_count ?? 0,
         eligible_revenue: calc?.eligible_revenue ?? 0,
@@ -420,12 +422,14 @@ export async function getDetailedPayoutsCSV(month: number, year: number): Promis
   const payouts = (payoutsRaw ?? []) as any[];
   if (payouts.length === 0) return "";
 
-  // For each payout, run the authoritative breakdown calculation
+  // For each payout, run the authoritative breakdown calculation.
+  // Use today as the upper bound for the current month (MTD).
+  const csvTodayCutoff = getTodayCutoff(month, year);
   const trainerData: Array<{ payout: any; calc: Awaited<ReturnType<typeof calculatePayoutForTrainer>> }> = [];
   const allPackageIds: string[] = [];
 
   for (const payout of payouts) {
-    const calc = await calculatePayoutForTrainer(supabase, payout.trainer_id, gymId, month, year);
+    const calc = await calculatePayoutForTrainer(supabase, payout.trainer_id, gymId, month, year, csvTodayCutoff);
     trainerData.push({ payout, calc });
     if (calc) {
       for (const b of calc.breakdown) allPackageIds.push(b.package_id);

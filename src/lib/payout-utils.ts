@@ -44,8 +44,9 @@ export interface PayoutCalc {
  *   1. Trainer has an ACTIVE assignment (status='active') to the client.
  *   2. The client's CURRENT package is active (is_active=true).
  *   3. The client is active (pt_clients.status='active').
- *   4. The package's start_date falls within the payout month
- *      (commission is earned in the month the package is purchased/started).
+ *   4. The package's start_date falls within the payout period:
+ *        - Full month:  [periodStart, periodEnd)  — periodEnd exclusive
+ *        - MTD mode:    [periodStart, todayCutoff] — todayCutoff inclusive
  *   5. Each client counted at most once (deduplication guard).
  *
  * Uses three separate queries — no FK joins — because pt_clients, pt_packages,
@@ -54,13 +55,18 @@ export interface PayoutCalc {
  * Commission formula:
  *   Fixed:      commission = commission_value  (₹ flat per package)
  *   Percentage: commission = amount_collected × commission_value / 100
+ *
+ * @param todayCutoff - Optional YYYY-MM-DD string (inclusive upper bound).
+ *   Pass today's date for current-month MTD calculations so future-dated
+ *   packages are excluded. Omit for full historical months.
  */
 export async function calculatePayoutForTrainer(
   supabase: SupabaseClient<any>,
   trainerId: string,
   gymId: string,
   month: number,
-  year: number
+  year: number,
+  todayCutoff?: string
 ): Promise<PayoutCalc | null> {
   const { periodStart, periodEnd } = getMonthPeriod(month, year);
 
@@ -107,10 +113,14 @@ export async function calculatePayoutForTrainer(
     .eq("gym_id", gymId)
     .eq("is_active", true);
 
-  // ── Filter: package must have started in this payout month ────────────────
+  // ── Filter: package must have started in this payout period ─────────────
   // Commission is earned in the month the package starts.
   // Fallback: if start_date is null, use created_at date (legacy safety net).
   // Deduplication: one entry per client (keep latest start_date if multiple).
+  //
+  // Date bounds:
+  //   todayCutoff provided → MTD mode: date >= periodStart && date <= todayCutoff
+  //   todayCutoff omitted  → full month: date >= periodStart && date < periodEnd
   const packagesByClient: Record<string, { pkg: any; date: string }> = {};
 
   for (const pkg of (packagesRaw ?? []) as any[]) {
@@ -119,7 +129,8 @@ export async function calculatePayoutForTrainer(
     const date: string =
       pkg.start_date ?? (pkg.created_at as string | undefined)?.slice(0, 10) ?? "";
 
-    if (date < periodStart || date >= periodEnd) continue;
+    if (date < periodStart) continue;
+    if (todayCutoff ? date > todayCutoff : date >= periodEnd) continue;
 
     const existing = packagesByClient[pkg.client_id];
     if (!existing || date > existing.date) {

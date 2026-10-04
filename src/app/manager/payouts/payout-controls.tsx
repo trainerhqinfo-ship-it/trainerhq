@@ -43,6 +43,8 @@ interface Props {
   trainers: Trainer[];
   month: number;
   year: number;
+  isCurrentMonth?: boolean;
+  mtdLabel?: string | null;
 }
 
 const MONTH_NAMES = [
@@ -71,6 +73,7 @@ const STATUS_ACTIONS: Record<string, { label: string; next: string; cls: string 
 function commissionRuleLabel(type: string | null, value: number | null): string {
   if (!type || value == null) return "No rule";
   if (type === "percentage") return `${value}%`;
+  if (value === 0) return "No rule";
   return `₹${value.toLocaleString("en-IN")}/package`;
 }
 
@@ -78,7 +81,7 @@ function escapeCsv(s: string | number | null | undefined): string {
   return `"${String(s ?? "").replace(/"/g, '""')}"`;
 }
 
-export function PayoutControls({ payouts, month, year }: Props) {
+export function PayoutControls({ payouts, month, year, isCurrentMonth, mtdLabel }: Props) {
   const [isPending, startTransition] = useTransition();
   const [generateMsg, setGenerateMsg] = useState("");
   const [rowPending, setRowPending] = useState<string | null>(null);
@@ -189,8 +192,15 @@ export function PayoutControls({ payouts, month, year }: Props) {
             className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg bg-[#B9E84A] text-[#1A1C18] hover:bg-[#A8D63A] disabled:opacity-60 transition-colors"
           >
             <RefreshCw size={12} className={isPending ? "animate-spin" : ""} />
-            {isPending ? "Generating…" : `Generate ${monthName} ${year} Payouts`}
+            {isPending
+              ? "Calculating…"
+              : isCurrentMonth
+              ? `Refresh ${monthName} ${year} MTD`
+              : `Generate ${monthName} ${year} Payouts`}
           </button>
+          {isCurrentMonth && mtdLabel && !isPending && (
+            <span className="text-xs text-[#6B6E67]">through {mtdLabel}</span>
+          )}
           {generateMsg && <span className="text-xs text-[#B9E84A]">{generateMsg}</span>}
           {error && <span className="text-xs text-red-400">{error}</span>}
         </div>

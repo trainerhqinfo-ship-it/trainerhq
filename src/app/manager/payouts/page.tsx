@@ -52,18 +52,27 @@ export default async function PayoutsPage({
   const payouts = (payoutsRaw ?? []) as any[];
   const trainers = (trainersData ?? []) as any[];
 
-  // Determine whether the client component should trigger auto-generation.
-  // Conditions (ALL must hold):
-  //   1. Month has no records  OR  all existing records are draft.
-  //   2. There are active trainers in this gym (nothing to generate otherwise).
-  // Any reviewed/approved/paid record blocks auto-generation entirely.
+  // Current-month detection (UTC date — close enough for IST)
+  const nowUtc = new Date();
+  const isCurrentMonth =
+    month === nowUtc.getUTCMonth() + 1 && year === nowUtc.getUTCFullYear();
+  // MTD label, e.g. "Oct 1 – Oct 4"
+  const todayDay = nowUtc.getUTCDate();
+  const shortMonthName = MONTH_NAMES[month - 1].slice(0, 3);
+  const mtdLabel = isCurrentMonth
+    ? `${shortMonthName} 1 – ${shortMonthName} ${todayDay}`
+    : null;
+
+  // Auto-generate when some active trainers are missing a payout record.
+  // Fires once per "missing trainer" situation — once all trainers have records
+  // (even ₹0 drafts) the component is not rendered, avoiding infinite re-runs.
+  // The manager uses the "Generate" button to refresh MTD numbers during the month.
   const hasLockedRecord = payouts.some(
     (p: any) => p.status === "reviewed" || p.status === "approved" || p.status === "paid"
   );
-  const allDraftOrEmpty =
-    !hasLockedRecord &&
-    (payouts.length === 0 || payouts.every((p: any) => p.status === "draft"));
-  const shouldAutoGenerate = allDraftOrEmpty && trainers.length > 0;
+  const payoutTrainerIds = new Set((payouts as any[]).map((p: any) => p.trainer_id));
+  const missingCount = trainers.filter((t: any) => !payoutTrainerIds.has(t.id)).length;
+  const shouldAutoGenerate = !hasLockedRecord && missingCount > 0 && trainers.length > 0;
 
   const totalPayout = payouts.reduce((s: number, p: any) => s + (p.final_payout ?? 0), 0);
   const draftCount = payouts.filter((p: any) => p.status === "draft").length;
@@ -75,7 +84,11 @@ export default async function PayoutsPage({
     <div>
       <Header
         title="Payouts"
-        subtitle={`${MONTH_NAMES[month - 1]} ${year}`}
+        subtitle={
+          mtdLabel
+            ? `${MONTH_NAMES[month - 1]} ${year} · Month-to-Date (${mtdLabel})`
+            : `${MONTH_NAMES[month - 1]} ${year}`
+        }
       />
 
       <div className="px-8 py-6 space-y-5">
@@ -123,6 +136,8 @@ export default async function PayoutsPage({
           trainers={trainers}
           month={month}
           year={year}
+          isCurrentMonth={isCurrentMonth}
+          mtdLabel={mtdLabel}
         />
       </div>
     </div>
